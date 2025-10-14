@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 run_scenarios.py
 
@@ -20,10 +20,10 @@ Usage examples:
   # B. K/L gap closed
   python run_scenarios.py --scenarios KL_gap_closed
 
-  # C1. K/L gap + open migration (μ only)   (note the chain order)
+  # C1. K/L gap + open migration (Î¼ only)   (note the chain order)
   python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only
 
-  # C2. K/L gap + open migration (τ_H only)
+  # C2. K/L gap + open migration (Ï„_H only)
   python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_tauH_only
 
   # With a faster horizon for quick testing
@@ -167,7 +167,7 @@ def _pick_by_base(
         with_slug.sort(key=lambda p: len(p.name))  # shortest name first
         return with_slug[0], f"copied from {with_slug[0].name}"
 
-    # 3) If there’s exactly one base_* left, take it
+    # 3) If thereâ€™s exactly one base_* left, take it
     if len(base_candidates) == 1:
         return base_candidates[0], f"copied from {base_candidates[0].name}"
 
@@ -232,6 +232,22 @@ def create_canonical_professor_figs(run_dir: Path, scen_slug: str, merged_cfg: D
 def append_professor_figs_summary(run_dir: Path, mapping: Dict[str, str]) -> None:
     # HOTFIX: make the append unmissable (always a blank line, consistent newlines)
     summary_path = run_dir / "run_summary.txt"
+    lines = [
+        "",  # ensure a blank line before the section
+        "Canonical professor figures:",
+    ]
+    for tgt, status in mapping.items():
+        lines.append(f"  - {tgt}: {status}")
+    with summary_path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def append_professor_figs_summary_into_results(run_dir: Path, mapping: Dict[str, str]) -> None:
+    """Also append the canonical-figures section into results/run_summary.txt if it exists,
+    so downstream tools/tests that read the harness summary see it."""
+    summary_path = run_dir / "results" / "run_summary.txt"
+    if not summary_path.exists():
+        return
     lines = [
         "",  # ensure a blank line before the section
         "Canonical professor figures:",
@@ -342,7 +358,7 @@ def main() -> int:
         # Clean root outputs unless user wants to keep them
         ensure_clean_root_outputs(keep=args.keep_root_outputs)
 
-        # Run Phase-1 harness (unchanged) — now WITH SCENARIO_SLUG in the environment
+        # Run Phase-1 harness (unchanged) â€” now WITH SCENARIO_SLUG in the environment
         print("=== Scenario run started ===")
         print(f"Scenario overlays: {overlay_names}")
         print(f"Writing merged params to: {PARAMS_PATH.name}")
@@ -383,3 +399,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
