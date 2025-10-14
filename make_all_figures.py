@@ -12,6 +12,11 @@ This script:
   5) Runs integrity checks on a baseline simulation
   6) Writes a short run log into results/run_summary.txt
 
+When the environment variable SCENARIO_SLUG is set (run_scenarios.py does this),
+we also produce two canonical, scenario-named figures:
+  - figures/fig_wage_ratio_<SCENARIO_SLUG>.png
+  - figures/fig_migration_diagnostics_<SCENARIO_SLUG>.png   (if migration shock data exist)
+
 Run from repo root:
     python make_all_figures.py
 
@@ -141,7 +146,7 @@ def main() -> int:
         log(traceback.format_exc())
         return 1
 
-    # 3) Generate figures
+    # 3) Generate figures (Phase-1 set)
     try:
         # Include the new strong-easing case
         shock_order = ("nD_up", "nL_up", "abatement_up", "ease_migration", "ease_migration_strong")
@@ -167,7 +172,7 @@ def main() -> int:
             )
             generated += 1
 
-            # Migration diagnostics only for migration shocks
+            # Migration diagnostics only for migration shocks, using shock name
             if shock_name in ("ease_migration", "ease_migration_strong"):
                 if migration_diagnostics_plot is not None:
                     migration_diagnostics_plot(rec, shock_name=shock_name, outdir=figures_dir)
@@ -183,6 +188,55 @@ def main() -> int:
             outdir=figures_dir,
         )
         generated += 1
+
+        # 3b) Canonical figures for the scenario, if SCENARIO_SLUG is provided
+        scen_slug = os.getenv("SCENARIO_SLUG", "").strip()
+        if scen_slug:
+            # Wage ratio from the baseline path (any baseline works)
+            try:
+                # Prefer nD_up baseline; otherwise pick first available
+                raw = res_all.get("raw", {})
+                keys = ["nD_up", "nL_up", "ease_migration", "ease_migration_strong", "abatement_up"]
+                base_key = next((k for k in keys if k in raw), None)
+                if base_key is None:
+                    base_key = next(iter(raw.keys()))  # may raise StopIteration -> caught below
+
+                base_res = raw[base_key]["res_base"]
+                ratio = base_res.D.w[:-1] / np.maximum(base_res.L.w[:-1], 1e-12)
+
+                import matplotlib.pyplot as plt
+                plt.figure()
+                plt.plot(base_res.tgrid[:-1], ratio)
+                plt.title("Wage ratio $\\rho_t = w_D / w_L$")
+                plt.xlabel("t")
+                plt.ylabel("$\\rho_t$")
+                _ensure_dir(figures_dir)
+                plt.savefig(os.path.join(figures_dir, f"fig_wage_ratio_{scen_slug}.png"), bbox_inches="tight", dpi=150)
+                plt.close()
+                generated += 1
+            except Exception:
+                # Skip cleanly if anything is missing
+                pass
+
+            # Migration diagnostics under this scenario slug:
+            # prefer 'ease_migration', otherwise 'ease_migration_strong'; otherwise skip
+            try:
+                rec_diag = None
+                if "ease_migration" in raw:
+                    rec_diag = raw["ease_migration"]
+                elif "ease_migration_strong" in raw:
+                    rec_diag = raw["ease_migration_strong"]
+
+                if rec_diag is not None:
+                    if migration_diagnostics_plot is not None:
+                        # Use scen_slug in the filename
+                        migration_diagnostics_plot(rec_diag, shock_name=scen_slug, outdir=figures_dir)
+                    else:
+                        _migration_diagnostics_fallback(rec_diag, shock_name=scen_slug, outdir=figures_dir)
+                    generated += 1
+            except Exception:
+                # Skip cleanly if diagnostics cannot be created
+                pass
 
         log(f"Figures generated into figures/*.png (count ≈ {generated}).")
     except Exception:
