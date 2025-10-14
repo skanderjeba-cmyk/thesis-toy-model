@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
 make_all_figures.py
 
@@ -32,6 +32,8 @@ Outputs:
 
 import os
 import sys
+import glob
+import shutil
 import traceback
 from datetime import datetime
 
@@ -197,9 +199,10 @@ def main() -> int:
         # 3b) Scenario-named canonicals if SCENARIO_SLUG is provided
         scen_slug = os.getenv("SCENARIO_SLUG", "").strip()
         if scen_slug:
+            raw = res_all.get("raw", {})
+
             # --- Wage ratio from a baseline path (any baseline works) ---
             try:
-                raw = res_all.get("raw", {})
                 # Prefer nD_up baseline; otherwise pick first available
                 pref_order = ["nD_up", "nL_up", "ease_migration", "ease_migration_strong", "abatement_up"]
                 base_key = next((k for k in pref_order if k in raw), None) or next(iter(raw.keys()))
@@ -235,25 +238,26 @@ def main() -> int:
 
             # --- Optional tidy: ensure capital/emissions are also scenario-named ---
             try:
-                import glob, shutil
                 # Capital
                 dst_cap = os.path.join(figures_dir, f"fig_capital_dilution_{scen_slug}.png")
                 if not os.path.exists(dst_cap):
-                    # Prefer nD_up version; otherwise first match
-                    srcs = [os.path.join(figures_dir, "fig_capital_dilution_nD_up.png")]
-                    srcs += sorted(glob.glob(os.path.join(figures_dir, "fig_capital_dilution_*.png")))
-                    src = next((s for s in srcs if os.path.exists(s)), None)
+                    # Prefer nD_up version; otherwise first available match
+                    preferred_first = [os.path.join(figures_dir, "fig_capital_dilution_nD_up.png")]
+                    candidates = preferred_first + sorted(glob.glob(os.path.join(figures_dir, "fig_capital_dilution_*.png")))
+                    src = next((s for s in candidates if os.path.exists(s)), None)
                     if src:
                         shutil.copy2(src, dst_cap)
+                        generated += 1
 
                 # Emissions
                 dst_em = os.path.join(figures_dir, f"fig_emissions_ratio_{scen_slug}.png")
                 if not os.path.exists(dst_em):
-                    srcs = [os.path.join(figures_dir, "fig_emissions_ratio_nD_up.png")]
-                    srcs += sorted(glob.glob(os.path.join(figures_dir, "fig_emissions_ratio_*.png")))
-                    src = next((s for s in srcs if os.path.exists(s)), None)
+                    preferred_first = [os.path.join(figures_dir, "fig_emissions_ratio_nD_up.png")]
+                    candidates = preferred_first + sorted(glob.glob(os.path.join(figures_dir, "fig_emissions_ratio_*.png")))
+                    src = next((s for s in candidates if os.path.exists(s)), None)
                     if src:
                         shutil.copy2(src, dst_em)
+                        generated += 1
             except Exception:
                 # Never fail the run just because of optional tidy copies
                 pass
@@ -266,7 +270,7 @@ def main() -> int:
 
     # 4) Comparative statics table to CSV (single spec)
     try:
-        df = save_table(res_all, outdir=results_dir, filename="cs_table.csv")
+        _ = save_table(res_all, outdir=results_dir, filename="cs_table.csv")
         log(f"Comparative-statics table saved to {os.path.join(results_dir, 'cs_table.csv')}")
     except Exception:
         log("ERROR: Failed while writing CS table.")
