@@ -32,3 +32,5 @@ figures/
 runs/
 
 prof_pack_step4.zip
+# Archives / run packs
+*.zip
