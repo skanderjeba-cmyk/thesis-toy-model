@@ -38,7 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import yaml
 
@@ -129,75 +129,115 @@ def move_outputs_into(run_dir: Path) -> Dict[str, int]:
 
 # ---------- Step 4 helpers: choose & copy canonical figures ----------
 
-def _score_filename(name_lower: str, keywords: List[str]) -> int:
-    """Simple keyword score for fuzzy selection among figure names."""
-    return sum(1 for kw in keywords if kw in name_lower)
+def _pick_by_base(
+    fig_dir: Path,
+    base: str,
+    scen_slug: str,
+    exclude_keywords: Optional[List[str]] = None,
+    fallback_keywords: Optional[List[str]] = None,
+) -> Tuple[Optional[Path], str]:
+    """
+    Choose the most appropriate figure for a canonical <base> and <scen_slug>.
+    Priority:
+      1) EXACT: fig_{base}_{scen_slug}.png
+      2) Any fig_{base}_*.png that CONTAINS scen_slug
+      3) Any fig_{base}_*.png (after excluding exclude_keywords)
+      4) Keyword-scored fallback over base_* or, if empty, all PNGs
+    Returns (path or None, status string).
+    """
+    exclude_keywords = [x.lower() for x in (exclude_keywords or [])]
+    scen_lower = scen_slug.lower()
 
+    def ok(p: Path) -> bool:
+        name = p.name.lower()
+        return not any(ex in name for ex in exclude_keywords)
 
-def _best_match(fig_dir: Path, keywords: List[str]) -> Optional[Path]:
-    """Pick the best matching PNG in fig_dir for the given keyword list."""
-    candidates = list(fig_dir.glob("*.png"))
-    if not candidates:
-        return None
-    scored = []
-    for p in candidates:
-        s = _score_filename(p.name.lower(), keywords)
-        if s > 0:
-            scored.append((s, -len(p.name), p))  # prefer more matches; break ties by shorter name
-    if not scored:
-        return None
-    scored.sort(reverse=True)
-    return scored[0][2]
+    # 1) EXACT
+    exact = fig_dir / f"{base}_{scen_slug}.png"
+    if exact.exists():
+        return exact, "already named"
+
+    # Candidates restricted to the base prefix
+    base_candidates = [p for p in fig_dir.glob(f"{base}_*.png") if ok(p)]
+
+    # 2) Prefer those that contain the scenario slug
+    with_slug = [p for p in base_candidates if scen_lower in p.name.lower()]
+    if with_slug:
+        with_slug.sort(key=lambda p: len(p.name))  # shortest name first
+        return with_slug[0], f"copied from {with_slug[0].name}"
+
+    # 3) If there’s exactly one base_* left, take it
+    if len(base_candidates) == 1:
+        return base_candidates[0], f"copied from {base_candidates[0].name}"
+
+    # 4) Fallback: keyword scoring across remaining base_* or, if empty, all PNGs
+    search_space = base_candidates or [p for p in fig_dir.glob("*.png") if ok(p)]
+    if not search_space:
+        return None, "MISSING (no figures found)"
+
+    if fallback_keywords:
+        kws = [k.lower() for k in fallback_keywords]
+        scored = []
+        for p in search_space:
+            name = p.name.lower()
+            score = sum(1 for k in kws if k in name)
+            if score > 0:
+                scored.append((score, len(name), p))
+        if scored:
+            scored.sort(key=lambda t: (-t[0], t[1]))  # max score, then shorter name
+            best = scored[0][2]
+            return best, f"copied from {best.name}"
+
+    # Nothing decent found
+    return None, "MISSING (no close match found among generated figures)"
 
 
 def create_canonical_professor_figs(run_dir: Path, scen_slug: str, merged_cfg: Dict[str, Any]) -> Dict[str, str]:
     """
     Copy the best-matching generated figures into canonical filenames expected for the pack.
-    Returns a dict target_name -> source ('copied from ...' | 'already named' | 'MISSING').
+    Returns a dict target_name -> status ('already named' | 'copied from ...' | 'MISSING ...').
     """
     fig_dir = run_dir / "figures"
     results: Dict[str, str] = {}
 
-    # Targets and their indicative keywords (lowercased; OR policy)
-    targets = {
-        # These exactly match your Phase-1 figure names, so they'll be picked immediately:
-        f"fig_capital_dilution_{scen_slug}.png": [
-            "fig_capital_dilution", "capital_dilution", "capital", "output_per_worker", "y/l", "yl", "productivity"
-        ],
-        f"fig_emissions_ratio_{scen_slug}.png": [
-            "fig_emissions_ratio", "emissions_ratio", "emission", "m_over_e", "m/e", "recorded"
-        ],
-        f"fig_wage_ratio_{scen_slug}.png": [
-            "wage_ratio", "wage", "varrho", "w_d", "w_l", "wageratio"
-        ],
-        f"fig_migration_diagnostics_{scen_slug}.png": [
-            "fig_migration_diagnostics", "migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"
-        ],
-    }
+    # Define the four canonical targets
+    targets = [
+        ("fig_capital_dilution", [], ["capital", "output_per_worker", "y/l", "yl", "productivity"]),
+        ("fig_emissions_ratio", [], ["emissions_ratio", "emission", "m_over_e", "m/e", "recorded"]),
+        # Wage ratio may not exist (optional)
+        ("fig_wage_ratio", [], ["wage_ratio", "wage", "varrho", "w_d", "w_l"]),
+        # For migration diagnostics, explicitly EXCLUDE capital/emissions files
+        ("fig_migration_diagnostics",
+         ["capital", "dilution", "emissions", "emission", "ratio"],
+         ["migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"]),
+    ]
 
-    for canonical_name, keywords in targets.items():
-        src = _best_match(fig_dir, [kw.lower() for kw in keywords])
-        dst = fig_dir / canonical_name
+    for base, exclude_kw, fallback_kw in targets:
+        src, status = _pick_by_base(fig_dir, base, scen_slug,
+                                    exclude_keywords=exclude_kw, fallback_keywords=fallback_kw)
+        dst = fig_dir / f"{base}_{scen_slug}.png"
         if src is None:
-            results[canonical_name] = "MISSING"
-        elif src.name == dst.name:
-            # No copy needed; it's already the canonical name from the harness
-            results[canonical_name] = "already named"
+            results[dst.name] = status
         else:
-            shutil.copy2(src, dst)
-            results[canonical_name] = f"copied from {src.name}"
+            if src.name == dst.name:
+                results[dst.name] = "already named"
+            else:
+                shutil.copy2(src, dst)
+                results[dst.name] = f"copied from {src.name}"
 
     return results
 
 
 def append_professor_figs_summary(run_dir: Path, mapping: Dict[str, str]) -> None:
-    lines = ["", "Canonical professor figures:"]
+    # HOTFIX: make the append unmissable (always a blank line, consistent newlines)
+    summary_path = run_dir / "run_summary.txt"
+    lines = [
+        "",  # ensure a blank line before the section
+        "Canonical professor figures:",
+    ]
     for tgt, status in mapping.items():
-        if status == "MISSING":
-            lines.append(f"  - {Path(tgt).name}: MISSING (no close match found among generated figures)")
-        else:
-            lines.append(f"  - {Path(tgt).name}: {status}")
-    with (run_dir / "run_summary.txt").open("a", encoding="utf-8") as f:
+        lines.append(f"  - {tgt}: {status}")
+    with summary_path.open("a", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
 
 
