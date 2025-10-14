@@ -2,10 +2,10 @@
 """
 run_scenarios.py
 
-Front-controller to run the existing Phase-1 harness (make_all_figures.py)
+Front-controller to run the Phase-1 harness (make_all_figures.py)
 under different scenario overlay chains, and archive outputs into runs/.
-Additionally (Step 4), it creates *canonical professor figures* by copying
-the best-matching generated PNGs to canonical filenames:
+Additionally, it creates *canonical professor figures* by copying the
+best-matching generated PNGs to canonical filenames:
 
   - fig_capital_dilution_<scenario>.png
   - fig_emissions_ratio_<scenario>.png
@@ -14,9 +14,10 @@ the best-matching generated PNGs to canonical filenames:
 
 Step 5: One-knob guard
   - Builds an overlay diff report (which dotted keys changed at each overlay)
-  - Enforces that overlays with name containing 'open_mu_only' only change migration.mu
-    and overlays with name containing 'open_tauH_only' only change migration.tau_H,
-    relative to the chain state just before that overlay is applied.
+  - Enforces that each overlay changes AT MOST ONE migration knob among:
+      migration.mu, migration.tau_H, migration.m_bar
+    (This check is name-agnostic; it applies to any overlay. You may exempt
+     neutral plumbing overlays like 'open_migration_defaults'.)
   - Adds --strict-one-knob to fail the run if violations are detected.
 """
 
@@ -283,61 +284,57 @@ def _changed_keys(prev: Dict[str, Any], curr: Dict[str, Any]) -> List[str]:
     return diffs
 
 
-def build_overlay_diff_report(base_cfg: Dict[str, Any], overlay_names: List[str]) -> Tuple[List[str], List[str]]:
+def _count_migration_knob_changes(prev_cfg: Dict[str, Any], next_cfg: Dict[str, Any]) -> List[str]:
     """
-    Returns (report_lines, violations) where:
-      - report_lines is a list of human-readable bullet lines per overlay
-      - violations is a list of violation lines for one-knob rule
-    The rule is active only for overlays whose name includes 'open_mu_only' or 'open_tauH_only'.
+    Return the list of migration knobs (among mu, tau_H, m_bar) that changed between prev_cfg and next_cfg.
     """
-    states = [dict(base_cfg)]
-    # successively apply overlays to produce chain of states
-    for name in overlay_names:
-        p = REPO_ROOT / "scenarios" / f"{name}.yaml"
-        ov = load_yaml(p)
-        states.append(deep_merge(states[-1], ov))
+    before = (prev_cfg.get("migration") or {})
+    after  = (next_cfg.get("migration") or {})
+    knobs = ["mu", "tau_H", "m_bar"]
 
-    lines: List[str] = ["", "Overlay diff report:"]
-    violations: List[str] = []
-    for i, name in enumerate(overlay_names, start=1):
-        prev, curr = states[i - 1], states[i]
-        changed = _changed_keys(prev, curr)
-        human = ", ".join(changed) if changed else "(no changes)"
-        line = f"  [{i}] {name} -> changed: {human}"
+    def num(v):
+        try:
+            return float(v)
+        except Exception:
+            return v
 
-        lname = name.lower()
-        if "open_mu_only" in lname:
-            mig = [k for k in changed if k.startswith("migration.")]
-            if mig == ["migration.mu"]:
-                line += "  [OK one-knob: mu]"
-            else:
-                violations.append(f"    VIOLATION in {name}: expected only migration.mu to change; got {mig or 'none'}")
-        elif "open_tauh_only" in lname:
-            mig = [k for k in changed if k.startswith("migration.")]
-            if mig == ["migration.tau_H"]:
-                line += "  [OK one-knob: tau_H]"
-            else:
-                violations.append(f"    VIOLATION in {name}: expected only migration.tau_H to change; got {mig or 'none'}")
-
-        lines.append(line)
-
-    if violations:
-        lines.append("")
-        lines.append("One-knob violations:")
-        lines.extend(violations)
-
-    return lines, violations
+    changed: List[str] = []
+    for k in knobs:
+        v0 = num(before.get(k, "__MISSING__"))
+        v1 = num(after.get(k, "__MISSING__"))
+        same = _values_equal(v0, v1)
+        if not same:
+            changed.append(f"migration.{k}")
+    return changed
 
 
-def append_overlay_diff_report(run_dir: Path, lines: List[str]) -> None:
-    # root summary
-    with (run_dir / "run_summary.txt").open("a", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join([""] + lines) + "\n")
-    # results summary (create if missing)
-    res_sum = run_dir / "results" / "run_summary.txt"
-    res_sum.parent.mkdir(parents=True, exist_ok=True)
-    with res_sum.open("a", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join([""] + lines) + "\n")
+def append_overlay_diff_section(run_dir: Path, reports: List[Tuple[int, str, List[str], List[str]]]) -> None:
+    """
+    Append overlay diff (all dotted changes + migration knobs changed) to run_summary.txt.
+    Each report tuple: (idx1, overlay_name, all_changed_keys, mig_knobs_changed)
+    """
+    summary_path = run_dir / "run_summary.txt"
+    lines = ["", "Overlay diff report:"]
+    for idx, name, all_changes, mig_changes in reports:
+        all_human = ", ".join(all_changes) if all_changes else "(no changes)"
+        mig_human = ", ".join(mig_changes) if mig_changes else "(none)"
+        # include literal 'changed:' so verifiers can grep for it
+        lines.append(f"  [{idx}] {name} -> changed: {all_human}   | migration_knobs: {mig_human}")
+    with summary_path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def append_overlay_diff_section_into_results(run_dir: Path, reports: List[Tuple[int, str, List[str], List[str]]]) -> None:
+    """Append the same overlay diff into results/run_summary.txt (create file if missing)."""
+    summary_path = run_dir / "results" / "run_summary.txt"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["", "Overlay diff report:"]
+    for idx, name, all_changes, mig_changes in reports:
+        all_human = ", ".join(all_changes) if all_changes else "(no changes)"
+        mig_human = ", ".join(mig_changes) if mig_changes else "(none)"
+        lines.append(f"  [{idx}] {name} -> changed: {all_human}   | migration_knobs: {mig_human}")
+    with summary_path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 # ---------- Summary writer ----------
@@ -392,7 +389,7 @@ def main() -> int:
     ap.add_argument(
         "--strict-one-knob",
         action="store_true",
-        help="Fail the run if an 'open_*_only' overlay changes more than the intended single knob.",
+        help="Fail the run if any overlay changes more than ONE migration knob (mu, tau_H, m_bar).",
     )
     args = ap.parse_args()
 
@@ -414,19 +411,47 @@ def main() -> int:
     run_dir = outroot / f"{iso_stamp_utc()}_{scen_slug}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build merged YAML (base + overlays) and the chain states for diffing
+    # 1) Build merged YAML (base + overlays) with strict one-knob enforcement
     base_cfg = load_yaml(PARAMS_PATH)
+
+    overlay_reports: List[Tuple[int, str, List[str], List[str]]] = []  # (idx1, name, all_changed, mig_changed)
     merged_cfg = dict(base_cfg)
-    for p in overlay_paths:
-        merged_cfg = deep_merge(merged_cfg, load_yaml(p))
+    prev_cfg = merged_cfg
+
+    # overlays that are permitted to adjust multiple migration knobs without tripping strict mode
+    EXEMPT = {"open_migration_defaults"}
+
+    for idx, p in enumerate(overlay_paths, start=1):
+        ov = load_yaml(p)
+        next_cfg = deep_merge(prev_cfg, ov)
+
+        # For the diff report: full dotted changes + migration-knob changes
+        all_changed = _changed_keys(prev_cfg, next_cfg)
+        mig_changed = _count_migration_knob_changes(prev_cfg, next_cfg)
+        overlay_reports.append((idx, p.stem, all_changed, mig_changed))
+
+        # Strict enforcement: if more than ONE migration knob changes in THIS overlay, fail.
+        if args.strict_one_knob and p.stem not in EXEMPT and len(mig_changed) > 1:
+            # Write a minimal summary now so the user still gets some breadcrumbs
+            write_run_summary(run_dir, scen_slug, [x.stem for x in overlay_paths], 
+                              int(next_cfg.get("simulation", {}).get("T", base_cfg.get("simulation", {}).get("T", 200))),
+                              {"figures": 0, "csv": 0, "txt": 0})
+            append_overlay_diff_section(run_dir, overlay_reports)
+            append_overlay_diff_section_into_results(run_dir, overlay_reports)
+            print(
+                f"STRICT ONE-KNOB VIOLATION: overlay [{p.stem}] changed multiple migration knobs: {', '.join(mig_changed)}",
+                file=sys.stderr,
+            )
+            return 4
+
+        prev_cfg = next_cfg
+
+    merged_cfg = prev_cfg  # final merged config
 
     # Optional T override
     if args.T is not None:
         merged_cfg.setdefault("simulation", {})
         merged_cfg["simulation"]["T"] = int(args.T)
-
-    # Step 5: overlay diff + one-knob check (relative to the chain)
-    overlay_diff_lines, one_knob_violations = build_overlay_diff_report(base_cfg, overlay_names)
 
     # 2) Validate via your loader (raises if invalid)
     try:
@@ -438,10 +463,12 @@ def main() -> int:
     # 3) Swap params.yaml (with backup), run harness, move outputs, restore.
     backup_path = REPO_ROOT / f"params.backup.{iso_stamp_utc()}.yaml"
     try:
+        # Backup and write merged config
         shutil.copy2(PARAMS_PATH, backup_path)
         save_yaml(PARAMS_PATH, merged_cfg)
         ensure_clean_root_outputs(keep=args.keep_root_outputs)
 
+        # Run Phase-1 harness — with SCENARIO_SLUG in the environment
         print("=== Scenario run started ===")
         print(f"Scenario overlays: {overlay_names}")
         print(f"Writing merged params to: {PARAMS_PATH.name}")
@@ -456,30 +483,26 @@ def main() -> int:
         print("Harness finished; moving outputs into the run directory...")
         counts = move_outputs_into(run_dir)
 
+        # Determine T used (read back from merged_cfg)
         T_used = int(merged_cfg.get("simulation", {}).get("T", base_cfg.get("simulation", {}).get("T", 200)))
 
         write_run_summary(run_dir, scen_slug, overlay_names, T_used, counts)
 
-        # Step 4 canonicals
+        # Canonical figures block
         canonical_map = create_canonical_professor_figs(run_dir, scen_slug, merged_cfg)
         append_professor_figs_summary(run_dir, canonical_map)
         append_professor_figs_summary_into_results(run_dir, canonical_map)
 
-        # Step 5 report (always write)
-        append_overlay_diff_report(run_dir, overlay_diff_lines)
-
-        # If strict and we have violations, return non-zero so CI/test can catch it
-        if args.strict_one_knob and one_knob_violations:
-            print("One-knob violations detected:\n" + "\n".join(one_knob_violations), file=sys.stderr)
-            print("=== Scenario run finished with one-knob violations (strict mode) ===")
-            print(f"Run directory: {run_dir}")
-            return 4
+        # Overlay diff (always write)
+        append_overlay_diff_section(run_dir, overlay_reports)
+        append_overlay_diff_section_into_results(run_dir, overlay_reports)
 
         print("=== Scenario run finished successfully ===")
         print(f"Run directory: {run_dir}")
         return 0
 
     finally:
+        # Restore original params.yaml
         if backup_path.exists():
             shutil.copy2(backup_path, PARAMS_PATH)
             try:
