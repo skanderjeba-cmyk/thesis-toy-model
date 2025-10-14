@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 run_scenarios.py
 
@@ -351,6 +351,7 @@ def main() -> int:
 
         env = dict(os.environ)
         env["SCENARIO_SLUG"] = scen_slug
+        env.setdefault("PYTHONIOENCODING", "utf-8")
         subprocess.run([sys.executable, str(PHASE1_HARNESS)], check=True, cwd=str(REPO_ROOT), env=env)
 
         print("Harness finished; moving outputs into the run directory...")
