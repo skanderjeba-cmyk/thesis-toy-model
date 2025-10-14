@@ -1,8 +1,8 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """
 make_all_figures.py
 
-One-command reproducibility harness for the Migration–Abatement–Carbon Stock toy model (Phase 1).
+One-command reproducibility harness for the Migrationâ€“Abatementâ€“Carbon Stock toy model (Phase 1).
 
 This script:
   1) Loads parameters from params.yaml
@@ -100,7 +100,7 @@ def _migration_diagnostics_fallback(rec, shock_name: str, outdir: str) -> None:
     ax[1, 1].set_xlabel("t")
     ax[1, 1].legend()
 
-    fig.suptitle(f"Migration diagnostics — {shock_name}")
+    fig.suptitle(f"Migration diagnostics â€” {shock_name}")
     fig.tight_layout()
     _ensure_dir(outdir)
     fname = os.path.join(outdir, f"fig_migration_diagnostics_{shock_name}.png")
@@ -180,7 +180,7 @@ def main() -> int:
                     _migration_diagnostics_fallback(rec, shock_name=shock_name, outdir=figures_dir)
                 generated += 1
 
-        # Ambiguity map (η annotated; interior boundary at ξ·y = 1/2)
+        # Ambiguity map (Î· annotated; interior boundary at Î¾Â·y = 1/2)
         ambiguity_map(
             xi_vals=np.linspace(0.05, 1.0, 60),
             y_vals=np.linspace(0.1, 3.0, 60),
@@ -238,7 +238,7 @@ def main() -> int:
                 # Skip cleanly if diagnostics cannot be created
                 pass
 
-        log(f"Figures generated into figures/*.png (count ≈ {generated}).")
+        log(f"Figures generated into figures/*.png (count â‰ˆ {generated}).")
     except Exception:
         log("ERROR: Failed while generating figures.")
         log(traceback.format_exc())
@@ -286,3 +286,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
