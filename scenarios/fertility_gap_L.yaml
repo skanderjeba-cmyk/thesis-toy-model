@@ -1,0 +1,3 @@
+﻿# One-knob change: fertility only in L
+countries:
+  L: { f: 0.020 }

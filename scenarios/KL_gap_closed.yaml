@@ -1,0 +1,15 @@
+﻿# Identical parameters, but initial K differs; migration shut
+countries:
+  D: { s: 0.23, f: 0.010, epsilon: 0.60, kappa: 0.20, xi: 0.35, theta_bar: 0.75, zeta: 0.95 }
+  L: { s: 0.23, f: 0.010, epsilon: 0.60, kappa: 0.20, xi: 0.35, theta_bar: 0.75, zeta: 0.95 }
+
+migration:
+  mu: 0.0
+  m_bar: 0.0
+  tau_H: 1000000000
+
+initial_state:
+  K_D: 1.2
+  K_L: 0.8
+  N_D: 1.0
+  N_L: 1.0
