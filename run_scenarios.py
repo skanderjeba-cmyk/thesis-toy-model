@@ -9,7 +9,7 @@ the best-matching generated PNGs to canonical filenames:
 
   - fig_capital_dilution_<scenario>.png
   - fig_emissions_ratio_<scenario>.png
-  - fig_wage_ratio_<scenario>.png           (optional)
+  - fig_wage_ratio_<scenario>.png            (optional)
   - fig_migration_diagnostics_<scenario>.png (optional)
 
 Usage examples:
@@ -36,7 +36,6 @@ import argparse
 import shutil
 import subprocess
 import sys
-import os
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -154,51 +153,50 @@ def _best_match(fig_dir: Path, keywords: List[str]) -> Optional[Path]:
 def create_canonical_professor_figs(run_dir: Path, scen_slug: str, merged_cfg: Dict[str, Any]) -> Dict[str, str]:
     """
     Copy the best-matching generated figures into canonical filenames expected for the pack.
-    Returns a dict target_name -> source (or 'MISSING').
+    Returns a dict target_name -> source ('copied from ...' | 'already named' | 'MISSING').
     """
     fig_dir = run_dir / "figures"
     results: Dict[str, str] = {}
 
-    # Targets and their indicative keywords (all lowercased; OR policy)
+    # Targets and their indicative keywords (lowercased; OR policy)
     targets = {
+        # These exactly match your Phase-1 figure names, so they'll be picked immediately:
         f"fig_capital_dilution_{scen_slug}.png": [
-            "capital", "y_l", "y-l", "yperL", "y per l", "output_per_worker", "output-per-worker", "productivity", "yl"
+            "fig_capital_dilution", "capital_dilution", "capital", "output_per_worker", "y/l", "yl", "productivity"
         ],
         f"fig_emissions_ratio_{scen_slug}.png": [
-            "emission", "emissions", "ratio", "m_over_e", "m/e", "recorded", "E_t", "m_e", "me"
+            "fig_emissions_ratio", "emissions_ratio", "emission", "m_over_e", "m/e", "recorded"
         ],
         f"fig_wage_ratio_{scen_slug}.png": [
-            "wage", "varrho", "w_d", "w_l", "wage_ratio", "wageratio"
+            "wage_ratio", "wage", "varrho", "w_d", "w_l", "wageratio"
         ],
-        # Heuristic; if a dedicated diagnostics panel exists, we’ll catch it; otherwise we’ll pick the most “migration” looking plot
         f"fig_migration_diagnostics_{scen_slug}.png": [
-            "migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"
+            "fig_migration_diagnostics", "migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"
         ],
     }
 
-    # Normalize keyword tokens to lowercase
-    for k in list(targets.keys()):
-        targets[k] = [kw.lower() for kw in targets[k]]
-
     for canonical_name, keywords in targets.items():
-        src = _best_match(fig_dir, keywords)
+        src = _best_match(fig_dir, [kw.lower() for kw in keywords])
+        dst = fig_dir / canonical_name
         if src is None:
             results[canonical_name] = "MISSING"
+        elif src.name == dst.name:
+            # No copy needed; it's already the canonical name from the harness
+            results[canonical_name] = "already named"
         else:
-            dst = fig_dir / canonical_name
             shutil.copy2(src, dst)
-            results[canonical_name] = src.name
+            results[canonical_name] = f"copied from {src.name}"
 
     return results
 
 
 def append_professor_figs_summary(run_dir: Path, mapping: Dict[str, str]) -> None:
     lines = ["", "Canonical professor figures:"]
-    for tgt, src in mapping.items():
-        if src == "MISSING":
+    for tgt, status in mapping.items():
+        if status == "MISSING":
             lines.append(f"  - {Path(tgt).name}: MISSING (no close match found among generated figures)")
         else:
-            lines.append(f"  - {Path(tgt).name}: copied from {src}")
+            lines.append(f"  - {Path(tgt).name}: {status}")
     with (run_dir / "run_summary.txt").open("a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -336,7 +334,7 @@ def main() -> int:
                 backup_path.unlink()
             except Exception:
                 pass
-        print(f"params.yaml restored to original contents.")
+        print("params.yaml restored to original contents.")
 
 
 if __name__ == "__main__":
