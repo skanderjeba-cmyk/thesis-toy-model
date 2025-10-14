@@ -4,6 +4,13 @@ run_scenarios.py
 
 Front-controller to run the existing Phase-1 harness (make_all_figures.py)
 under different scenario overlay chains, and archive outputs into runs/.
+Additionally (Step 4), it creates *canonical professor figures* by copying
+the best-matching generated PNGs to canonical filenames:
+
+  - fig_capital_dilution_<scenario>.png
+  - fig_emissions_ratio_<scenario>.png
+  - fig_wage_ratio_<scenario>.png           (optional)
+  - fig_migration_diagnostics_<scenario>.png (optional)
 
 Usage examples:
 
@@ -32,7 +39,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import yaml
 
@@ -107,7 +114,6 @@ def move_outputs_into(run_dir: Path) -> Dict[str, int]:
     res_dst.mkdir(parents=True, exist_ok=True)
 
     if fig_src.exists():
-        # Move entire tree
         for item in fig_src.iterdir():
             shutil.move(str(item), str(fig_dst / item.name))
         shutil.rmtree(fig_src)
@@ -121,6 +127,83 @@ def move_outputs_into(run_dir: Path) -> Dict[str, int]:
         counts["txt"] = len(list(res_dst.glob("*.txt")))
     return counts
 
+
+# ---------- Step 4 helpers: choose & copy canonical figures ----------
+
+def _score_filename(name_lower: str, keywords: List[str]) -> int:
+    """Simple keyword score for fuzzy selection among figure names."""
+    return sum(1 for kw in keywords if kw in name_lower)
+
+
+def _best_match(fig_dir: Path, keywords: List[str]) -> Optional[Path]:
+    """Pick the best matching PNG in fig_dir for the given keyword list."""
+    candidates = list(fig_dir.glob("*.png"))
+    if not candidates:
+        return None
+    scored = []
+    for p in candidates:
+        s = _score_filename(p.name.lower(), keywords)
+        if s > 0:
+            scored.append((s, -len(p.name), p))  # prefer more matches; break ties by shorter name
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def create_canonical_professor_figs(run_dir: Path, scen_slug: str, merged_cfg: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Copy the best-matching generated figures into canonical filenames expected for the pack.
+    Returns a dict target_name -> source (or 'MISSING').
+    """
+    fig_dir = run_dir / "figures"
+    results: Dict[str, str] = {}
+
+    # Targets and their indicative keywords (all lowercased; OR policy)
+    targets = {
+        f"fig_capital_dilution_{scen_slug}.png": [
+            "capital", "y_l", "y-l", "yperL", "y per l", "output_per_worker", "output-per-worker", "productivity", "yl"
+        ],
+        f"fig_emissions_ratio_{scen_slug}.png": [
+            "emission", "emissions", "ratio", "m_over_e", "m/e", "recorded", "E_t", "m_e", "me"
+        ],
+        f"fig_wage_ratio_{scen_slug}.png": [
+            "wage", "varrho", "w_d", "w_l", "wage_ratio", "wageratio"
+        ],
+        # Heuristic; if a dedicated diagnostics panel exists, we’ll catch it; otherwise we’ll pick the most “migration” looking plot
+        f"fig_migration_diagnostics_{scen_slug}.png": [
+            "migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"
+        ],
+    }
+
+    # Normalize keyword tokens to lowercase
+    for k in list(targets.keys()):
+        targets[k] = [kw.lower() for kw in targets[k]]
+
+    for canonical_name, keywords in targets.items():
+        src = _best_match(fig_dir, keywords)
+        if src is None:
+            results[canonical_name] = "MISSING"
+        else:
+            dst = fig_dir / canonical_name
+            shutil.copy2(src, dst)
+            results[canonical_name] = src.name
+
+    return results
+
+
+def append_professor_figs_summary(run_dir: Path, mapping: Dict[str, str]) -> None:
+    lines = ["", "Canonical professor figures:"]
+    for tgt, src in mapping.items():
+        if src == "MISSING":
+            lines.append(f"  - {Path(tgt).name}: MISSING (no close match found among generated figures)")
+        else:
+            lines.append(f"  - {Path(tgt).name}: copied from {src}")
+    with (run_dir / "run_summary.txt").open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+# ---------- Summary writer ----------
 
 def write_run_summary(run_dir: Path, scen_slug: str, overlays: List[str], T_used: int, counts: Dict[str, int]) -> None:
     summary = [
@@ -144,8 +227,10 @@ def write_run_summary(run_dir: Path, scen_slug: str, overlays: List[str], T_used
     (run_dir / "run_summary.txt").write_text("\n".join(summary), encoding="utf-8")
 
 
+# ---------- Main ----------
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Scenario runner that archives outputs into runs/")
+    ap = argparse.ArgumentParser(description="Scenario runner that archives outputs into runs/ and prepares canonical figures")
     ap.add_argument(
         "--scenarios",
         required=True,
@@ -201,7 +286,7 @@ def main() -> int:
     # 2) Validate via your loader (raises if invalid)
     try:
         _ = load_params_with_overlays(str(PARAMS_PATH), [str(p) for p in overlay_paths])
-        # If T override was provided, validate that too by reloading with a temp write below.
+        # If T override was provided, we still write merged_cfg for the harness call below.
     except Exception as e:
         print(f"ERROR: overlay validation failed: {e}", file=sys.stderr)
         return 3
@@ -212,7 +297,7 @@ def main() -> int:
         # Backup current params.yaml
         shutil.copy2(PARAMS_PATH, backup_path)
 
-        # If T override was requested, we must write merged_cfg to params.yaml and let the harness load it.
+        # Write merged_cfg to params.yaml for the harness
         save_yaml(PARAMS_PATH, merged_cfg)
 
         # Clean root outputs unless user wants to keep them
@@ -235,6 +320,10 @@ def main() -> int:
 
         write_run_summary(run_dir, scen_slug, overlay_names, T_used, counts)
 
+        # ---------- Step 4: create canonical professor figures ----------
+        canonical_map = create_canonical_professor_figs(run_dir, scen_slug, merged_cfg)
+        append_professor_figs_summary(run_dir, canonical_map)
+
         print("=== Scenario run finished successfully ===")
         print(f"Run directory: {run_dir}")
         return 0
@@ -243,8 +332,12 @@ def main() -> int:
         # Restore original params.yaml
         if backup_path.exists():
             shutil.copy2(backup_path, PARAMS_PATH)
-            backup_path.unlink(missing_ok=True)
+            try:
+                backup_path.unlink()
+            except Exception:
+                pass
         print(f"params.yaml restored to original contents.")
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
