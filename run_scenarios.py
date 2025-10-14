@@ -209,8 +209,7 @@ def create_canonical_professor_figs(run_dir: Path, scen_slug: str, merged_cfg: D
         # For migration diagnostics, explicitly EXCLUDE capital/emissions files
         ("fig_migration_diagnostics",
          ["capital", "dilution", "emissions", "emission", "ratio"],
-         ["migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho"]),
-    ]
+         ["migration", "m_t", "flow", "mig", "population", "n_l", "l_d", "varrho", "ease_migration", "diagnostic"]),]
 
     for base, exclude_kw, fallback_kw in targets:
         src, status = _pick_by_base(fig_dir, base, scen_slug,
