@@ -1,0 +1,20 @@
+=== Phase 1 Audit (stable) ===
+[INFO] Repo: C:\Users\skand\thesis-toy-model
+[PASS] A1.D Solow fixed point (rel err 0.027%, n_hat=0.0092)
+[PASS] A1.L Solow fixed point (rel err 0.046%, n_hat=0.0107)
+[PASS] A2 M/E condition: 1+g_E=1.011 vs phi_M=0.900
+[PASS] B Invariants (positivity & budget)
+[PASS] C.off nD_up: (Y/L)_D falls
+[PASS] C.off nL_up: (Y/L)_L falls
+[PASS] C.off abatement_up: World E falls
+[PASS]  C.on nD_up: (Y/L)_D falls
+[PASS]  C.on nL_up: (Y/L)_L falls
+[PASS]  C.on abatement_up: World E falls
+[PASS] D1 Figures generated (13 png files found)
+[PASS] D2 CS table off
+[PASS] D3 CS table on
+[PASS] D4 Run summary
+
+=== Audit Summary ===
+Passed: 14
+Failed: 0

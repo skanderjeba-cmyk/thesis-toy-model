@@ -1,0 +1,61 @@
+globals:
+  alpha: 0.33
+  delta: 0.06
+  phi_M: 0.90
+  g_A: 0.0              # stationary tech so (Y/L) levels don't drift in Step 1
+  y_star: 1.0
+  eta: 0.3              # small >0: "richer pollute more" channel (toggle controls use)
+
+# Baseline toggles (runner will still evaluate OFF and ON for figures/tables)
+toggles:
+  use_income_dependent_intensity: true
+  use_active_labor: false
+
+countries:
+  # Developed: higher savings, older workforce (lower active-labor share),
+  # lower epsilon, stronger abatement responsiveness and cap.
+  D:
+    s: 0.26
+    f: 0.003           # very low net natural increase
+    epsilon: 0.45
+    kappa: 0.20
+    xi: 0.45
+    theta_bar: 0.85
+    zeta: 0.92         # aging: smaller active-labor share (used when toggle ON)
+
+  # Developing: lower savings, higher net natural increase, higher epsilon,
+  # weaker abatement responsiveness and lower cap, close to full active labor.
+  L:
+    s: 0.20
+    f: 0.015
+    epsilon: 0.70
+    kappa: 0.20
+    xi: 0.25
+    theta_bar: 0.65
+    zeta: 0.98
+
+migration:
+  mu: 0.06
+  tau: 0.08
+  m_bar: 0.10         # persons cap; stays safely below fertility branch
+
+initial_state:
+  K: { D: 1.0, L: 1.0 }
+  N: { D: 1.0, L: 1.0 }
+  A0: 1.0
+  M0: 0.0
+
+simulation:
+  T: 200
+
+# Scenario overlays (for paper illustrations; leave as-is)
+scenarios:
+  high_abatement:
+    countries:
+      D: { xi: 0.60, theta_bar: 0.90 }
+      L: { xi: 0.40, theta_bar: 0.80 }
+  easy_migration:
+    migration: { mu: 0.10, tau: 0.05 }
+  aging_in_D:
+    countries: { D: { zeta: 0.90 } }
+    toggles:   { use_active_labor: true }

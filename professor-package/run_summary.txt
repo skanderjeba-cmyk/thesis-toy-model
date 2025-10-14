@@ -1,0 +1,9 @@
+Reproducibility run summary
+===========================
+Time: 2025-09-29T12:06:13
+Repo: C:\Users\skand\thesis-toy-model
+
+Experiments: completed (off & on)
+Figures: figures/*.png
+Tables: results/cs_table_off.csv, results/cs_table_on.csv
+Checks: baseline invariants passed

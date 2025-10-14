@@ -1,0 +1,10 @@
+=== Reproducibility run started ===
+Timestamp (local): 2025-10-07T14:00:34
+Working directory: C:\Users\skand\thesis-toy-model
+Loaded params.yaml successfully.
+Experiments completed for toggles: off and on.
+Figures generated into figures/*.png
+Comparative-statics tables saved to results/cs_table_off.csv and results/cs_table_on.csv
+Sanity checks (Step 9) passed on baseline simulations (off & on).
+Wrote summary: C:\Users\skand\thesis-toy-model\results\run_summary.txt
+=== Reproducibility run finished successfully ===

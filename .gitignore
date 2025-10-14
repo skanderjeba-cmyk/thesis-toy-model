@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# Builds / metadata
+*.egg-info/
+dist/
+build/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Envs & secrets
+.env
+.venv
+.env.local
+
+# Project outputs
+results/
+figures/
+
+# IDEs
+.vscode/
+.idea/
+ 
