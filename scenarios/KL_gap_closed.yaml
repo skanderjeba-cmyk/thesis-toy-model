@@ -5,7 +5,7 @@ countries:
 
 migration:
   mu: 0.0
-  m_bar: 0.0
+  m_bar: 0.10
   tau_H: 1000000000
 
 initial_state:
