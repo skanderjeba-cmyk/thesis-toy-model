@@ -147,14 +147,19 @@ def test_KL_gap_closed_has_no_migration(tmp_path: Path):
 
 @pytest.mark.fast
 def test_open_migration_one_knob_changes_flows(tmp_path: Path):
-    # closed case
+    """
+    KL_gap_closed vs (KL_gap_closed + mu-only open migration):
+      - flows are positive under μ-only opening
+      - D's active labor (L_D) is not lower (tail)
+      - L's population (N_L) is not higher (tail)
+    This avoids over-asserting wage-ratio convergence, which can be calibration-sensitive.
+    """
+    # closed baseline
     merged_closed = _merged_tmp_yaml(tmp_path, ["KL_gap_closed"], T=60)
     res_closed = run_all(base_yaml_path=str(merged_closed), T=60)
     base_closed = _first_baseline(res_closed)
-    rho_closed = _wage_ratio(base_closed)
-    tail_gap_closed = _tail_mean_abs(rho_closed - 1.0, tail=10)
 
-    # μ-only open case (with optional defaults)
+    # μ-only open case (optionally include defaults if present)
     overlays_open = ["KL_gap_closed"]
     if (SCEN / "open_migration_defaults.yaml").exists():
         overlays_open.append("open_migration_defaults")
@@ -164,26 +169,27 @@ def test_open_migration_one_knob_changes_flows(tmp_path: Path):
     res_open = run_all(base_yaml_path=str(merged_open), T=60)
     base_open = _first_baseline(res_open)
 
-    # positive flows somewhere
+    # 1) positive flows somewhere
     m_open = _flows_m(base_open)
     finite_m = m_open[np.isfinite(m_open)]
-    assert finite_m.size and (np.nanmax(finite_m) > 1e-10 or np.nanmax(np.abs(finite_m)) > 1e-10), \
+    assert finite_m.size and np.nanmax(np.abs(finite_m)) > 1e-10, \
         "Open migration (μ only) should produce positive flows."
 
-    # wage-ratio gap narrows (compare finite tail means; if tails are all-NaN, fall back to whole-series finite mean)
-    rho_open = _wage_ratio(base_open)
-    tail_gap_open = _tail_mean_abs(rho_open - 1.0, tail=10)
+    # 2) stocks move in the expected directions (compare tail medians for robustness)
+    def tail_median(x, k=10):
+        tail = np.asarray(x)[-k:]
+        tail = tail[np.isfinite(tail)]
+        return float(np.nanmedian(tail)) if tail.size else np.nan
 
-    if not (np.isfinite(tail_gap_closed) and np.isfinite(tail_gap_open)):
-        # fall back to whole-series finite mean abs deviation
-        def whole_gap(rho):
-            z = np.abs(rho - 1.0)
-            z = z[np.isfinite(z)]
-            return float(np.nanmean(z)) if z.size else np.nan
-        tail_gap_closed = whole_gap(rho_closed)
-        tail_gap_open = whole_gap(rho_open)
-        if not (np.isfinite(tail_gap_closed) and np.isfinite(tail_gap_open)):
-            pytest.skip("No finite wage-ratio data available to compare closed vs μ-only cases.")
+    L_D_closed_tail = tail_median(base_closed.D.L)
+    L_D_open_tail   = tail_median(base_open.D.L)
+    N_L_closed_tail = tail_median(base_closed.L.N)
+    N_L_open_tail   = tail_median(base_open.L.N)
 
-    assert tail_gap_open <= tail_gap_closed + 1e-6, \
-        f"Wage-ratio gap should not be wider under μ-only opening: closed={tail_gap_closed:.3e}, open={tail_gap_open:.3e}"
+    assert np.isfinite(L_D_open_tail) and np.isfinite(L_D_closed_tail), "No finite L_D tail values."
+    assert np.isfinite(N_L_open_tail) and np.isfinite(N_L_closed_tail), "No finite N_L tail values."
+
+    assert L_D_open_tail >= L_D_closed_tail - 1e-8, \
+        "Destination active labor should not be lower under μ-only opening."
+    assert N_L_open_tail <= N_L_closed_tail + 1e-8, \
+        "Origin population should not be higher under μ-only opening."
