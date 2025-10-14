@@ -4,13 +4,15 @@ Parameter objects, YAML loader, scenario overlay, and validations.
 This module defines:
 - CountryParams, GlobalParams, MigrationParams, InitialState, SimulationConfig
 - ModelParams: top-level container with two CountryParams (D, L) + globals
-- load_params(yaml_path, scenario=None): load from params.yaml, apply optional scenario overlay,
+- load_params(yaml_path, scenario=None): load from params.yaml, apply optional in-file "scenario" overlay,
   build dataclasses, and run validations aligned with the paper.
+- load_params_with_overlays(base_path, overlay_paths): load from params.yaml and apply one or more
+  external YAML overlays (files under scenarios/), in order, then validate.
 
 Academic invariants enforced here (raise ValueError on violation):
 - Domains: alpha∈(0,1), delta∈(0,1), phi_M∈(0,1), eta≥0, q_star>0, g_A>-1 (so 1+g_A>0),
   s∈(0,1), kappa>0, epsilon>0, xi≥0, theta_bar∈(0,1], f>-1,
-  mu>0, tau_H≥0, m_bar∈(0,1].
+  mu≥0, tau_H≥0, m_bar∈(0,1].
 - Budget cap at the *cap*: s_i + kappa_i * theta_bar_i^2 ≤ 1 for each country.
 - Positivity for initial states: K_D,K_L,N_D,N_L,A0_D,A0_L > 0; M0 ≥ 0.
 - Migration cap stated in persons (N_L,t); wages per active worker (used in rules.py).
@@ -27,8 +29,10 @@ NOTE: (i) Emissions intensity is always q-based: eps(q) = epsilon * (q / q_star)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any, Iterable
 import copy
+import os
+import tempfile
 import yaml
 
 
@@ -49,7 +53,7 @@ class CountryParams:
     kappa: float           # abatement cost weight > 0
     xi: float              # abatement responsiveness ≥ 0 (theta = xi * y)
     theta_bar: float       # abatement cap in (0,1]
-    zeta: float = 1.0      # active-labor share varsigma ∈ (0,1]; L = zeta * N
+    zeta: float = 1.0      # active-labor share ∈ (0,1]; L = zeta * N
     zeta_schedule: Optional[List[float]] = None  # optional time path for zeta_t in (0,1]
 
     # Convenience: pick zeta for a given time index t (falls back to scalar)
@@ -74,7 +78,7 @@ class GlobalParams:
 
 @dataclass(frozen=True)
 class MigrationParams:
-    mu: float              # responsiveness > 0 (1/period)
+    mu: float              # responsiveness ≥ 0 (1/period)
     tau_H: float           # headcount wedge ≥ 0 (persons/period)
     m_bar: float           # feasibility cap share ∈ (0,1] of N_L
     mig_slack: float = 0.0  # strict-slack calibration buffer (≥0); see cross-validation
@@ -164,7 +168,7 @@ class ModelParams:
 
 
 # ----------------------------
-# YAML loading and overlay
+# YAML loading and overlay (in-file "scenario" support)
 # ----------------------------
 
 def _deep_update(base: dict, overlay: dict) -> dict:
@@ -232,8 +236,9 @@ def _validate_globals(g: GlobalParams) -> None:
 
 
 def _validate_migration(m: MigrationParams) -> None:
-    if not (m.mu > 0.0):
-        raise ValueError(f"mu must be > 0; got {m.mu}")
+    # Allow mu = 0 to "shut" migration cleanly (overlay scenarios); rest of caps remain enforced.
+    if not (m.mu >= 0.0):
+        raise ValueError(f"mu must be ≥ 0; got {m.mu}")
     if not (m.tau_H >= 0.0):
         raise ValueError(f"tau_H must be ≥ 0; got {m.tau_H}")
     if not (0.0 < m.m_bar <= 1.0):
@@ -293,7 +298,7 @@ def _validate_cross(mp: ModelParams) -> None:
 
 
 # ----------------------------
-# Loader
+# Loader (in-file scenario key)
 # ----------------------------
 
 def _parse_initial_state(init_cfg: dict) -> InitialState:
@@ -364,7 +369,7 @@ def _parse_initial_state(init_cfg: dict) -> InitialState:
 
 def load_params(yaml_path: str, scenario: Optional[str] = None) -> ModelParams:
     """
-    Load parameters from YAML, apply optional scenario overlay by key, and validate.
+    Load parameters from YAML, apply optional in-file scenario overlay by key, and validate.
 
     Parameters
     ----------
@@ -380,7 +385,7 @@ def load_params(yaml_path: str, scenario: Optional[str] = None) -> ModelParams:
     with open(yaml_path, "r", encoding="utf-8") as f:
         base_cfg = yaml.safe_load(f) or {}
 
-    # Apply scenario overlay if requested
+    # Apply in-file scenario overlay if requested
     if scenario:
         scenarios = base_cfg.get("scenarios", {})
         if scenario not in scenarios:
@@ -459,6 +464,78 @@ def load_params(yaml_path: str, scenario: Optional[str] = None) -> ModelParams:
     _validate_cross(mp)
 
     return mp
+
+
+# ============================================================
+# External overlay support: merge base params.yaml with files
+# ============================================================
+
+def _read_yaml_file(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"YAML at {path} must be a mapping (dict), got {type(data).__name__}")
+    return data
+
+def deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively merge overlay into base.
+    - Dicts are merged key-by-key (overlay wins).
+    - Scalars/lists are replaced by overlay.
+    """
+    out = dict(base) if isinstance(base, dict) else {}
+    for k, v in (overlay or {}).items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+def merge_yaml_files_to_dict(base_path: str, overlay_paths: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+    merged = _read_yaml_file(base_path)
+    for p in (overlay_paths or []):
+        ov = _read_yaml_file(p)
+        merged = deep_merge(merged, ov)
+    return merged
+
+def write_merged_yaml(base_path: str, overlay_paths: Optional[Iterable[str]], out_path: str) -> str:
+    """
+    Write merged YAML (base + overlays in order) to out_path. Returns out_path.
+    """
+    merged = merge_yaml_files_to_dict(base_path, overlay_paths)
+    with open(out_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(merged, f, sort_keys=False)
+    return out_path
+
+def merge_yaml_to_temp(base_path: str, overlay_paths: Optional[Iterable[str]] = None) -> str:
+    """
+    Create a temporary YAML file containing the merged spec. Returns the temp path.
+    Caller is responsible for deleting the file (unless using load_params_with_overlays).
+    """
+    merged = merge_yaml_files_to_dict(base_path, overlay_paths)
+    fd, tmp = tempfile.mkstemp(prefix="merged_", suffix=".yaml")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        yaml.safe_dump(merged, f, sort_keys=False)
+    return tmp
+
+def load_params_with_overlays(base_path: str, overlay_paths: Optional[Iterable[str]] = None) -> ModelParams:
+    """
+    Load ModelParams from base YAML plus one or more external overlay YAMLs applied in order.
+    Overlays only need to include the keys that change.
+
+    Implementation note (Windows-safe):
+    We write a temporary merged YAML, call the existing load_params(tmp_path),
+    then delete the temp file.
+    """
+    tmp = merge_yaml_to_temp(base_path, overlay_paths)
+    try:
+        return load_params(tmp)  # reuse the same constructor + validations
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            # If the file is locked by another process, just leave it; it's in the OS temp dir.
+            pass
 
 
 # ----------------------------
