@@ -33,12 +33,12 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
-import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 
 import yaml
@@ -90,7 +90,7 @@ def git_commit_hash() -> str:
 
 def iso_stamp_utc() -> str:
     # Example: 2025-10-10T1530Z
-    return datetime.utcnow().strftime("%Y-%m-%dT%H%MZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
 
 
 def ensure_clean_root_outputs(keep: bool) -> None:
