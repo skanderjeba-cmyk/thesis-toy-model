@@ -36,3 +36,16 @@ prof_pack_step4.zip
 *.zip
 # Archives / run packs
 *.zip
+
+# Auto: workspace outputs & caches
+.pytest_cache/
+*.pyc
+*.pyo
+*.synctex.gz
+prof_pack_*.zip
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg

@@ -1,0 +1,890 @@
+\documentclass[12pt,a4paper]{article}
+
+% ------------------------------------------------
+% Packages
+% ------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{setspace}
+\usepackage{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\usepackage{fvextra} % improved verbatim with line wrapping
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage[framemethod=TikZ]{mdframed}
+\usepackage{microtype}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{hyperref}
+
+\captionsetup[table]{labelfont=bf}
+\geometry{margin=1in}
+\setstretch{1.2}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue,
+  pdftitle={Phase 1 Companion: Codebase \& Reproducibility},
+  pdfauthor={Skander Jebali},
+  pdfsubject={Implementation note for Phase 1},
+  pdfkeywords={Reproducibility, Rule-based model, Solow, Migration, Abatement, Carbon stock}
+}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}{>{\centering\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\pos}[1]{\ensuremath{\left[ #1 \right]_+}}
+
+% ------------------------------------------------
+% Title
+% ------------------------------------------------
+\title{\textbf{Phase 1 Companion (Code \& Reproducibility)}}
+\author{Skander Jebali}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+
+\begin{mdframed}[backgroundcolor=gray!10,linewidth=0.5pt]
+\textbf{Purpose.} This note explains \emph{what} we implemented in Phase~1, how the files are organized, and how the numerical pieces fit together. It is complementary to the model write-up: here we focus on software structure, data flow, and the precise meaning of each artifact (figures, tables, audit).
+\end{mdframed}
+
+
+% =================================================
+\section{Big picture (Section 1 of 17)}
+% =================================================
+We built a two-country, rule-based growth--emissions toy model. Countries \(i\in\{D,L\}\) produce with Cobb--Douglas technology and follow simple rules for savings, abatement, and one-way migration \(L\to D\). A global carbon stock \(M\) accumulates emissions; there are no climate damages in Phase~1.
+
+\paragraph{Phase-1 scope.} Phase-1 runs use constant active-labor shares \((\zeta_i)\). The code also supports time-varying \(\zeta_{i,t}\) if provided; we simply do not use that option in Phase-1 experiments.\\
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Micro-notation used in this note.}
+We write $\zeta$ for the active-labor share with $L=\zeta N$; $y=Y/N$ (per capita income);
+$q=Y/L$ (output per active worker); and $\varrho_t=w_{D,t}/w_{L,t}$ (wage ratio driving migration).
+\end{mdframed}
+
+
+\noindent The codebase supports:
+\begin{itemize}[leftmargin=1.25em]
+  \item deterministic simulation of time paths for \((K,N,L,Y,E,M)\),
+  \item closed-form steady states in efficiency units (Solow),
+  \item four comparative-statics experiments,
+  \item figures (capital dilution; emissions \& \(M_{t+1}/E_t\) ratio; ambiguity map),
+  \item tables that mirror the \emph{categories} of the comparative-statics summary (computed from simulations),
+  \item invariants \& light tests, and
+  \item one-command reproducibility with an audit.
+\end{itemize}
+
+
+
+% =================================================
+\section{Repository layout (Section 2 of 17)}
+% =================================================
+The repository \code{thesis-toy-model/} is organized so that every research artifact has a clear home. Table~\ref{tab:repo} maps paths to roles and outputs.
+
+\begin{small}
+\begin{longtable}{@{} >{\raggedright\arraybackslash}p{0.30\textwidth}
+                         >{\raggedright\arraybackslash}p{0.25\textwidth}
+                         >{\raggedright\arraybackslash}p{0.38\textwidth} @{}}
+\caption{\textbf{Repository map (Phase 1).}} \label{tab:repo}\\
+\toprule
+\textbf{Path} & \textbf{Role / Type} & \textbf{Key contents \& outputs}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Path} & \textbf{Role / Type} & \textbf{Key contents \& outputs}\\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\emph{continued on next page}}\\
+\bottomrule
+\endfoot
+\bottomrule
+\endlastfoot
+
+\nolinkurl{model/} &
+Python package: core logic &
+Numerical primitives for simulation, steady states, checks. Imported as \nolinkurl{model.*}. \\[2pt]
+
+\nolinkurl{model/params.py} &
+Parameters \& YAML loader &
+Dataclasses (globals, countries, initial state, migration) with feasibility guards. \nolinkurl{load_params("params.yaml")} returns a validated \emph{ModelParams}. \\[2pt]
+
+\nolinkurl{model/rules.py} &
+Pure rule functions &
+Closed-form rules for abatement, intensity, wages, migration, and capital update (no side effects). \\[2pt]
+
+\nolinkurl{model/solow.py} &
+Closed-form steady states &
+Efficiency-unit fixed points; provides \(\hat{k}^\ast\) and \((Y/L)^\ast\), and the carbon ratio limit helper. \\[2pt]
+
+\nolinkurl{model/simulate.py} &
+Deterministic simulator &
+Period timing and state updates; returns paths for \((Y/L)_i\), \(y_i\), \(E_t\), \(M_t\), and recorded \(M_{t+1}/E_t\). \\[2pt]
+
+\nolinkurl{model/checks.py} &
+Invariants \& asserts &
+Positivity, budget feasibility, migration caps, BGP ratio condition; called during simulation. \\[6pt]
+
+\nolinkurl{experiments/} &
+Experiment engine &
+Baseline vs.\ shock orchestration. \\[2pt]
+
+\nolinkurl{experiments/shocks.py} &
+Shock helpers &
+Overlays for \nolinkurl{nD_up}, \nolinkurl{nL_up}, \nolinkurl{abatement_up}, \nolinkurl{ease_migration}, \nolinkurl{ease_migration_strong}. \\[2pt]
+
+\nolinkurl{experiments/runner.py} &
+Main orchestrator &
+\nolinkurl{run_all(...)} returns nested results for plots/tables (CSV written by \nolinkurl{viz/tables.py}). \\[6pt]
+
+\nolinkurl{viz/} &
+Plotting \& tables &
+Publication figures and CS tables. \\[2pt]
+
+\nolinkurl{viz/plots.py} &
+Matplotlib figures &
+\nolinkurl{capital_dilution_plot(...)}, \nolinkurl{emissions_and_ratio_plot(...)}, \nolinkurl{ambiguity_map(...)}; outputs to \nolinkurl{figures/}. \\[2pt]
+
+\nolinkurl{viz/diagnostics.py} &
+Diagnostic plots &
+\nolinkurl{migration_diagnostics_plot(...)}: \(2\times 2\) panel for migration shocks (paths of \(m_t\), \(\varrho_t\), \(N_L\), \(L_D\)); saved for \nolinkurl{ease_migration} and \nolinkurl{ease_migration_strong}. \\[2pt]
+
+\nolinkurl{viz/tables.py} &
+Pandas CS tables &
+Builds comparative-statics table; saved as \nolinkurl{results/cs_table.csv}. \\[6pt]
+
+\nolinkurl{tests/} &
+Pytest unit tests &
+Theory checks (Solow, elasticity threshold, carbon ratio limit, BGP growth, budget feasibility) and simulation sign tests. \\[6pt]
+
+\nolinkurl{figures/} &
+Output folder (created) &
+All \nolinkurl{.png} figures with stable names encoding shocks. \\[6pt]
+
+\nolinkurl{results/} &
+Output folder (created) &
+\nolinkurl{cs_table.csv} and \nolinkurl{run_summary.txt} (timestamped notes). \\[6pt]
+
+\nolinkurl{scripts/} &
+Utility scripts &
+\nolinkurl{scripts/sweep_ease_migration.py}: grid over \(\mu\) and \(\Delta\tau_H\); writes \nolinkurl{results/ease_migration_sweep.csv}. Run from repo root with \nolinkurl{python -m scripts.sweep_ease_migration} (Windows: \nolinkurl{set PYTHONPATH=\%CD\%}). \\[6pt]
+
+\nolinkurl{params.yaml} &
+Parameter file &
+Human-readable configuration: globals, per-country blocks, migration. Loaded by \nolinkurl{model/params.py}. \\[6pt]
+
+\nolinkurl{make_all_figures.py} &
+One-command harness &
+End-to-end generator: runs experiments, figures, tables, checks; writes \nolinkurl{results/run_summary.txt}. \\[6pt]
+
+\nolinkurl{audit_phase1.py} &
+Post-run audit &
+Verifies outputs exist and identities hold; prints concise checklist. \\[6pt]
+
+\nolinkurl{README.md} &
+Top-level guide &
+Quick-start instructions and reproduction pointers. \\
+\end{longtable}
+\end{small}
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Naming discipline.} Filenames encode (i) the category and (ii) the shock (e.g.\ \nolinkurl{fig_emissions_ratio_nD_up.png}). This keeps manuscript cross-references stable. We also denote the active-labor share by $\zeta$ (so $L=\zeta N$). In YAML/code the key is \texttt{zeta}. \emph{Older drafts used $\varsigma$; we no longer do.}
+\end{mdframed}
+
+
+% ================================================
+\section*{Addendum: Progression Scenarios (Step 7)}
+% ================================================
+\addcontentsline{toc}{section}{Addendum: Progression Scenarios (Step 7)}
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Why initial K/L gaps?} \;
+Capital $K$ and (active) labor $L$ are endogenous over time. We set an initial $K$ split at $t=0$ (a controlled $K/L$ gap) and then study how \emph{migration} and \emph{fertility} act on top. This makes the channel attribution unambiguous: Step~B turns on an initial gap; Steps~C/D vary \emph{one knob at a time}.
+\end{mdframed}
+
+\subsection*{Progression scenarios at a glance (overlay chains and what changes)}
+\begin{small}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} l l Y @{}}
+\toprule
+\textbf{Scenario name} & \textbf{Overlay file(s)} & \textbf{What changes (relative to base)} \\
+\midrule
+Symmetric baseline, closed & \nolinkurl{symmetric_baseline_closed.yaml} &
+Symmetric country blocks; migration shut (e.g., $\mu{=}0$, very high $\tau_H$); balanced initial capitals. \\[2pt]
+
+K/L gap, closed & \nolinkurl{KL_gap_closed.yaml} &
+Initial capital split (e.g., $K_D{>}K_L$) to create a controlled $K/L$ gap at $t{=}0$; migration still shut. \\[2pt]
+
+K/L gap + open migration (\(\mu\) only) & 
+\begin{minipage}[t]{0.42\textwidth}\raggedright
+\nolinkurl{KL_gap_closed.yaml}, \\
+\nolinkurl{open_migration_defaults.yaml}, \\
+\nolinkurl{KL_gap_open_mu_only.yaml}
+\end{minipage}
+&
+\texttt{migration.mu} increased; \texttt{migration.tau\_H} and other migration knobs unchanged. One-knob opening of responsiveness. \\[6pt]
+
+K/L gap + open migration (\(\tau_H\) only) &
+\begin{minipage}[t]{0.42\textwidth}\raggedright
+\nolinkurl{KL_gap_closed.yaml}, \\
+\nolinkurl{open_migration_defaults.yaml}, \\
+\nolinkurl{KL_gap_open_tauH_only.yaml}
+\end{minipage}
+&
+\texttt{migration.tau\_H} reduced; \texttt{migration.mu} unchanged. One-knob opening of the policy wedge. \\[6pt]
+
+(+ fertility variant, L side) &
+\begin{minipage}[t]{0.42\textwidth}\raggedright
+\nolinkurl{KL_gap_closed.yaml}, \\
+\nolinkurl{open_migration_defaults.yaml}, \\
+\nolinkurl{KL_gap_open\_\{mu\textbar tauH\}\_only.yaml}, \\
+\nolinkurl{fertility_gap_L.yaml}
+\end{minipage}
+&
+Only \texttt{countries.L.f} changes (higher net fertility in \(L\)). Combine with either the \(\mu\)-only or \(\tau_H\)-only chain to keep “one knob per overlay.” \\
+\bottomrule
+\end{tabularx}
+\caption{\textbf{Progression scenarios (Step 7).} Each line is an overlay chain; only the stated knob changes at the last step.}
+\label{tab:progression-scenarios}
+\end{table}
+\end{small}
+
+\subsection*{How to reproduce (exact commands)}
+\begin{mdframed}[backgroundcolor=gray!06,linewidth=0.5pt]
+\begin{Verbatim}[fontsize=\small]
+# A) Symmetric baseline, closed
+python run_scenarios.py --scenarios symmetric_baseline_closed --T 200
+
+# B) K/L gap, closed
+python run_scenarios.py --scenarios KL_gap_closed --T 200
+
+# C1) K/L gap + open migration (μ only)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only --T 200 --strict-one-knob
+
+# C2) K/L gap + open migration (τ_H only)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_tauH_only --T 200 --strict-one-knob
+
+# D) Fertility variant on top of C1 (example: L higher fertility)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only,fertility_gap_L --T 200 --strict-one-knob
+\end{Verbatim}
+\emph{Outputs:} each run creates \nolinkurl{runs/<UTCstamp>_<scenario>/\{figures/, results/, run_summary.txt\}} and writes canonical figures named
+\texttt{fig\_capital\_dilution\_<scenario>.png}, \texttt{fig\_emissions\_ratio\_<scenario>.png}, \texttt{fig\_wage\_ratio\_<scenario>.png},
+\texttt{fig\_migration\_diagnostics\_<scenario>.png} (when migration is open).
+\end{mdframed}
+
+\subsection*{Repository map (new items added by Step 7; no changes to Table~\ref{tab:repo})}
+\begin{small}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} l l Y @{}}
+\toprule
+\textbf{Path} & \textbf{Role / Type} & \textbf{Key contents \& outputs} \\
+\midrule
+\nolinkurl{scenarios/} &
+YAML overlays (deltas) &
+Atomic changes layered on \nolinkurl{params.yaml}; e.g., \nolinkurl{KL_gap_closed.yaml}, \nolinkurl{KL_gap_open_mu_only.yaml}. \\[3pt]
+
+\nolinkurl{runs/} &
+Timestamped run archives &
+One subfolder per invocation: \nolinkurl{<UTCstamp>_<scenario>/figures/}, \nolinkurl{.../results/}, \nolinkurl{run_summary.txt}. \\[3pt]
+
+\nolinkurl{run_scenarios.py} &
+Front controller &
+Applies overlay chains, enforces one-knob policy (scoped to names), copies canonical figures, writes diff report into summaries. \\
+\bottomrule
+\end{tabularx}
+\caption{\textbf{Repository map deltas introduced in Step 7 (append-only).}}
+\end{table}
+\end{small}
+
+
+% ------------------------------------------------
+\subsection*{How to run (Step 8): one-shot commands to build the professor's pack}
+% ------------------------------------------------
+\addcontentsline{toc}{subsection}{How to run (Step 8)}
+
+\begin{mdframed}[backgroundcolor=gray!06,linewidth=0.5pt]
+\textbf{Windows (PowerShell).}
+\begin{Verbatim}[fontsize=\small]
+cd <repo-root>
+$env:PYTHONIOENCODING = 'utf-8'
+
+# A) Symmetric baseline, closed
+python run_scenarios.py --scenarios symmetric_baseline_closed --T 200
+
+# B) K/L gap, closed
+python run_scenarios.py --scenarios KL_gap_closed --T 200
+
+# C1) K/L gap + open migration (μ only)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only --T 200 --strict-one-knob
+
+# C2) K/L gap + open migration (τ_H only)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_tauH_only --T 200 --strict-one-knob
+
+# D) (optional) Fertility variant on top of C1 (one extra knob)
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only,fertility_gap_L --T 200 --strict-one-knob
+\end{Verbatim}
+\end{mdframed}
+
+\begin{mdframed}[backgroundcolor=gray!06,linewidth=0.5pt]
+\textbf{macOS/Linux (bash).}
+\begin{Verbatim}[fontsize=\small]
+cd <repo-root>
+export PYTHONIOENCODING=utf-8
+
+python run_scenarios.py --scenarios symmetric_baseline_closed --T 200
+python run_scenarios.py --scenarios KL_gap_closed --T 200
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only --T 200 --strict-one-knob
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_tauH_only --T 200 --strict-one-knob
+python run_scenarios.py --scenarios KL_gap_closed,open_migration_defaults,KL_gap_open_mu_only,fertility_gap_L --T 200 --strict-one-knob
+\end{Verbatim}
+\end{mdframed}
+
+\paragraph{What appears.}
+Each command creates a new folder \texttt{runs/<UTCstamp>_<scenario>/} with:
+\begin{itemize}[leftmargin=1.25em]
+  \item \texttt{figures/} including canonical files \texttt{fig\_capital\_dilution\_<scenario>.png}, \texttt{fig\_emissions\_ratio\_<scenario>.png}, \texttt{fig\_wage\_ratio\_<scenario>.png}, and (when migration is open) \texttt{fig\_migration\_diagnostics\_<scenario>.png};
+  \item \texttt{results/} with \texttt{cs\_table.csv} and \texttt{run\_summary.txt};
+  \item an overlay diff report (and one-knob OK/violation marks) appended to \texttt{run\_summary.txt}.
+\end{itemize}
+
+\paragraph{Pack to send.}
+After running, zip the latest run of each scenario:
+\begin{Verbatim}[fontsize=\small]
+# Windows (PowerShell)
+$ts = Get-Date -AsUTC -Format "yyyyMMddTHHmmZ"
+$slug = @(
+  "symmetric_baseline_closed",
+  "KL_gap_closed",
+  "KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only",
+  "KL_gap_closed__open_migration_defaults__KL_gap_open_tauH_only",
+  "KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only__fertility_gap_L"  # if used
+)
+function Latest($s){ Get-ChildItem runs -Directory | ?{$_.Name -like "*_$s"} | Sort LastWriteTime -Desc | Select -First 1 -Expand FullName }
+$paths = $slug | % { Latest $_ } | ? { $_ }
+Compress-Archive -Path $paths -DestinationPath ("prof_pack_{0}.zip" -f $ts) -Force
+\end{Verbatim}
+
+\begin{Verbatim}[fontsize=\small]
+# macOS/Linux (bash)
+ts=$(date -u +%Y%m%dT%H%MZ)
+pick() { ls -td runs/*_"$1" 2>/dev/null | head -1; }
+zip -r "prof_pack_${ts}.zip" \
+  "$(pick symmetric_baseline_closed)" \
+  "$(pick KL_gap_closed)" \
+  "$(pick KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only)" \
+  "$(pick KL_gap_closed__open_migration_defaults__KL_gap_open_tauH_only)" \
+  "$(pick KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only__fertility_gap_L)"
+\end{Verbatim}
+
+
+
+% =================================================
+\section{Parameters and structure (Section 3 of 17)}
+% =================================================
+Parameters are grouped to keep YAML clean and to separate universal vs.\ country-specific quantities.
+
+\paragraph{Global (shared across countries).}
+\(\alpha\in(0,1)\) (capital share); \(\delta\in(0,1)\) (depreciation); \(\phi_M\in(0,1)\) (carbon persistence);
+\(g_A\) (labor-augmenting productivity growth: \(A_{i,t+1}=(1+g_A)A_{i,t}\), with \(1+g_A>0\));
+\(q^\star>0\) (scaling constant in the intensity function; \(q=Y/L\)); \(\eta\ge 0\) (productivity--intensity elasticity).
+
+\paragraph{Per-country $i\in\{D,L\}$.}
+Savings $s_i\in(0,1)$; net fertility $f_i>-1$; baseline emissions intensity $\varepsilon_i>0$;
+abatement cost weight $\kappa_i>0$; abatement responsiveness $\xi_i\ge 0$;
+abatement cap $\bar\theta_i\in(0,1]$; \emph{active-labor share} $\zeta_i\in(0,1]$. 
+\textit{Phase~1 uses constant \(\zeta_i\) (scalars) for reproducibility; the code also supports time-varying \(\zeta_{i,t}\), which we do not use in Phase~1.}
+
+\paragraph{Migration.}
+Responsiveness \(\mu>0\) \emph{(units: 1/period)}; headcount policy wedge \(\tau_H\ge 0\) \emph{(persons/period)}; feasibility cap \(\bar m\in(0,1]\) \emph{(share of \(N_{L,t}\), persons scaling)}. 
+We use a \emph{strict-slack} calibration buffer \texttt{mig\_slack}>0 implementing 
+\[
+\bar m \;\le\; \min\{\,1,\ 1+f_L-\texttt{mig\_slack}\,\},
+\]
+
+\noindent so the \((1+f_L)N_{L,t}\) branch of the cap is slack in baseline runs.\\
+\noindent\textit{Note.} \ \texttt{mig\_slack} = strict-slack buffer for migration feasibility; unrelated to emissions intensity \(\varepsilon\).
+We validate \(\tau_H\ge 0\) on load; shock overlays that would push \(\tau_H<0\) are \emph{clipped to zero}, so “strong” easing reduces \(\tau_H\) only down to zero.
+
+\paragraph{Feasibility guards (checked on load and during simulation).}
+Budget feasibility \(s_i+\kappa_i\theta_{i,t}^2\le 1\) \emph{by construction} because \(\theta=\min\{\bar\theta,\xi y,\sqrt{(1-s)/\kappa}\}\) is capped; optionally enforce \(s_i+\kappa_i\bar\theta_i^2\le 1\) so \(C\ge 0\) even when \(\theta=\bar\theta\).
+Wages and outputs are strictly positive under Cobb--Douglas with \(K>0\), \(A>0\), \(L>0\);
+migration is clipped (persons) at \(\min\{\bar mN_{L,t},(1+f_L)N_{L,t}\}\). We impose a strict-slack calibration $\bar m \le \min\{1,\, 1+f_L-\text{mig\_slack}\}$ with \texttt{mig\_slack}$>0$ \textit{(\texttt{mig\_slack} = strict-slack buffer for migration feasibility; unrelated to emissions intensity \(\varepsilon\))}, so the $(1+f_L)$ branch of the cap is slack in baseline and $N_{L,t}>0$ holds for all $t$.
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Units cheat-sheet.}
+\begin{itemize}[leftmargin=1.25em]
+  \item \(\mu\): 1/period (migration responsiveness); \(\tau_H\): persons/period (headcount wedge); \(\bar m\): \emph{share} (cap applied as \(\bar m\,N_L\) persons).
+  \item \(\varepsilon\): emissions per good (so \(E=\varepsilon(q)\,(1-\theta)\,Y\) is in physical emissions units).
+  \item \(E\), \(M\): physical units (e.g., GtCO\(_2\)e).
+\end{itemize}
+\end{mdframed}
+
+
+\subsection*{Note on parameter values (with rationale)}
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+Below is what the current \code{params.yaml} effectively encodes (as reported by the code).
+\end{mdframed}
+
+\paragraph{Globals.}
+\begin{description}[leftmargin=2.2in,style=nextline]
+  \item[\code{alpha} = 0.33] Standard capital share in macro calibrations.
+  \item[\code{delta} = 0.06] Annual depreciation (\(\sim\)6\%).
+  \item[\code{phi\_M} = 0.90] Carbon persistence; typical order of magnitude.
+  \item[\code{g\_A} = 0.0] Stationary technology in Phase~1 to keep per-capita levels comparable.
+  \item[\code{q\_star} = 1.0] Scaling for productivity-dependent intensity (\(q=Y/L\)).
+  \item[\code{eta} = 0.30] Small positive elasticity for the ``higher-productivity $\Rightarrow$ higher intensity'' channel; conservative relative to earlier 0.5.
+\end{description}
+
+\paragraph{Country D (Developed).}
+\begin{description}[leftmargin=2.2in,style=nextline]
+  \item[\code{s} = 0.26] Slightly higher saving rate than L.
+  \item[\code{f} = 0.003] Very low net natural increase (stylized fact for rich countries).
+  \item[\code{epsilon} = 0.45] Lower emissions intensity than L.
+  \item[\code{kappa} = 0.20] Abatement cost weight.
+  \item[\code{xi} = 0.45] Stronger abatement responsiveness to income per capita.
+  \item[\code{theta\_bar} = 0.85] Higher abatement cap than L.
+  \item[\code{zeta} = 0.92] Lower active-labor share (aging proxy).
+\end{description}
+
+\paragraph{Country L (Developing).}
+\begin{description}[leftmargin=2.2in,style=nextline]
+  \item[\code{s} = 0.20] Lower saving rate than D.
+  \item[\code{f} = 0.015] Positive net natural increase.
+  \item[\code{epsilon} = 0.70] Higher emissions intensity.
+  \item[\code{kappa} = 0.20] Abatement cost weight (matched to D for clarity).
+  \item[\code{xi} = 0.25] Weaker abatement responsiveness than D.
+  \item[\code{theta\_bar} = 0.65] Lower abatement cap than D.
+  \item[\code{zeta} = 0.98] Near full active-labor share.
+\end{description}
+
+\paragraph{Migration.}
+\begin{description}[leftmargin=2.2in,style=nextline]
+  \item[\code{mu} = 0.06,\ \code{tau\_H} = 0.08,\ \code{m\_bar} = 0.10,\ \texttt{mig\_slack} = 0.02] 
+\end{description}
+\noindent Moderate responsiveness, modest policy wedge, a 10\% cap (headcount), and a strict-slack buffer (parameter \texttt{mig\_slack}; not the emissions-intensity \(\varepsilon\)) so the $(1+f_L)$ branch is slack.
+
+\paragraph{Initial state.}
+\begin{description}[leftmargin=2.2in,style=nextline]
+\item[\code{K\_D} $= 1.0$, \ \code{K\_L} $= 1.0$]
+\item[\code{N\_D} $= 1.0$, \ \code{N\_L} $= 1.0$]
+\item[\code{A0\_D} $= 1.0$, \ \code{A0\_L} $= 1.0$, \ \code{M0} $= 0.0$]
+\end{description}
+\noindent\textit{Notation.} We use math subscripts \(A_{i,0}\) in formulas, while the YAML keys are \code{A0\_D}, \code{A0\_L}.
+
+\paragraph{Simulation.}
+\begin{description}[leftmargin=2.2in,style=nextline]
+  \item[\code{T} = 200] 
+\end{description}
+\noindent Horizon used in reproducibility runs and figures.
+
+\paragraph{Scenarios.}
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{\code{nD\_up}:} small bump in \(f_D\) (higher \(n_D^{\text{act}}\)) to illustrate capital dilution in \(D\).
+  \item \textbf{\code{nL\_up}:} small bump in \(f_L\) (higher \(n_L^{\text{act}}\)) to illustrate capital dilution in \(L\).
+  \item \textbf{\code{abatement\_up}:} raises \((\xi,\theta\_bar)\) in both countries (D: \(0.60,0.90\); L: \(0.40,0.80\)).
+  \item \textbf{\code{ease\_migration}:} higher \(\mu\) and lower \(\tau_H\) to relax migration frictions.
+  \item \textbf{\code{aging\_in\_D}:} lowers \(\zeta_D\) (e.g., to \(0.90\)) for that scenario.
+\end{itemize}
+
+
+
+% =================================================
+\section{Core rule functions (Section 4 of 17)}
+% =================================================
+All rule functions are pure maps: inputs \(\to\) outputs with no side effects.
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{Abatement:} \(\theta(y)=\min\{\bar\theta,\ \xi y,\ \sqrt{(1-s)/\kappa}\}\in[0,1]\).
+  \item \textbf{Emissions intensity:} \(\varepsilon(q)=\varepsilon\,(q/q^\star)^{\eta}\) with \(q=Y/L\).
+  \item \textbf{Emissions:} \(E=\varepsilon(q)\,(1-\theta(y))\,Y\), with \(\varepsilon(q)=\varepsilon\,(q/q^\star)^{\eta}\) and \(\theta(y)=\min\{\bar\theta,\xi y,\sqrt{(1-s)/\kappa}\}\).
+  \item \textbf{Wage per active worker:} \(w_{i,t}=(1-\alpha)\,Y_{i,t}/L_{i,t}\) with \(L_{i,t}=\zeta_i N_{i,t}\).
+ \item \textbf{Migration (one way \(L\to D\)):}
+Let \(\varrho_t\equiv \tfrac{w_{D,t}}{w_{L,t}}\). Then
+ \[
+m_t=\min\!\left\{\,\pos{\,\mu\,\varrho_t\,N_{L,t}-\tau_H\,},\ \bar m\,N_{L,t},\ (1+f_L)N_{L,t}\right\}.
+ \]
+\emph{Note.} Under our strict-slack calibration (\(\bar m \le \min\{1,\ 1+f_L-\text{mig\_slack}\}\)), the \((1+f_L)N_{L,t}\) branch is slack.
+\newline
+\emph{Rationale.} Using the wage \emph{ratio} \(\varrho_t\) avoids mechanical scaling from common TFP growth \(g_A\).
+
+  \item \textbf{Capital update:} \(K_{i,t+1}=(1-\delta)K_{i,t}+s_iY_{i,t}\).
+\end{itemize}
+
+
+
+% =================================================
+\section{Closed-form steady states (Section 5 of 17)}
+% =================================================
+Define effective capital \(\hat k_{i,t}=K_{i,t}/(A_{i,t}L_{i,t})\). With \(A_{i,t+1}=(1+g_A)A_{i,t}\) and \(L_{i,t+1}=(1+n^{\text{act}}_i)L_{i,t}\),
+\begin{equation*}
+\hat{k}_i^\ast
+= \left(\frac{s_i}{\delta + g_A + n^{\text{act}}_i + g_A\, n^{\text{act}}_i}\right)^{\!\tfrac{1}{1-\alpha}}, 
+\qquad
+\left(\frac{Y}{L}\right)_{i}^{\!\ast}
+= A_{i,t} \, (\hat{k}_i^\ast)^\alpha.
+\end{equation*}
+
+\medskip
+\noindent\textit{Per-active-worker to per-capita mapping.}
+Since $y=\dfrac{Y}{N}=\zeta\,\dfrac{Y}{L}$, at steady state
+\[
+y_i^\ast=\zeta_i\,A_{i,t}\,(\hat{k}_i^\ast)^\alpha.
+\]
+
+\noindent\textit{Finiteness condition.}\;
+\(\hat{k}^\ast\) is finite iff
+\[
+n^{\text{act}}_i \;>\; -\frac{\delta+g_A}{\,1+g_A\,}.
+\]
+
+\noindent The dilution comparative static is standard:
+$\frac{\partial \hat{k}^\ast}{\partial n^{\text{act}}_i} < 0$ and therefore \(\frac{\partial \big((Y/L)_i^\ast / A_{i,t}\big)}{\partial n^{\text{act}}_i} < 0\).\\
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Interpretation.} Steady states are in efficiency units. Levels grow with \(A_{i,t}\). We use the closed form to benchmark simulated transitions and to verify signs under the demographic shocks.
+\end{mdframed}
+
+
+
+% =================================================
+\section{Simulator (Section 6 of 17)}
+% =================================================
+Each period executes the following \emph{timing}, which is fixed across experiments:
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{Production:} \(Y_{i,t}=K_{i,t}^{\alpha}(A_{i,t} L_{i,t})^{1-\alpha}\).
+  \item \textbf{Prices:} \(w_{i,t}=(1-\alpha)Y_{i,t}/L_{i,t}\), \(r_{i,t}=\alpha Y_{i,t}/K_{i,t}\).
+  \item \textbf{Rules:} compute \(y_{i,t}=Y_{i,t}/N_{i,t}\) and \(q_{i,t}=Y_{i,t}/L_{i,t}\); then set
+\(\theta_{i,t}=\theta_i(y_{i,t})\), \(\varepsilon_{i,t}=\varepsilon_i\!\left(\frac{q_{i,t}}{q^\star}\right)^{\eta}\), and migration \(m_t\).
+  \item \textbf{Feasibility:} enforce the abatement budget cap and the migration cap; assert positivity.
+  \item \textbf{Updates:} \(K_{i,t+1}=(1-\delta)K_{i,t}+s_iY_{i,t}\); populations
+  \(N_{D,t+1}=(1+f_D)N_{D,t}+m_t\), \(N_{L,t+1}=(1+f_L)N_{L,t}-m_t\); active labor 
+  \(L_{i,t+1}=\zeta_{i,t+1}\,N_{i,t+1}\) if a schedule \(\zeta_{i,t}\) is provided, else \(L_{i,t+1}=\zeta_i N_{i,t+1}\) \textit{(Phase~1: \(\zeta_i\) is constant)}. 
+  Compute world emissions \(E_t=\sum_i \varepsilon_{i,t}\,(1-\theta_{i,t})\,Y_{i,t}\); then update the carbon stock \(M_{t+1}=\phi_M M_t+E_t\); technology \(A_{i,t+1}=(1+g_A)A_{i,t}\).\par\noindent\textit{Units.}\ Emissions \(E\) and the stock \(M\) are in physical units; \(\varepsilon\) is “emissions per good.”
+\end{enumerate}
+The simulator returns arrays for \((Y/L)_i\), \(y_i\), world \(E_t\), \(M_t\), and the recorded ratio \(M_{t+1}/E_t\) (we do not separately store \(M_t/E_t\)). Figures use this recorded ratio (useful when levels of \(M\) do not converge under \(g_E>0\)).\\
+
+
+
+% =================================================
+\section{Experiments (Section 7 of 17)}
+% =================================================
+We run a baseline and four comparative-statics shocks, plus a stronger migration variant:
+\begin{enumerate}[label=(\alph*),leftmargin=1.5em]
+  \item \textbf{\code{nD\_up}}: higher labor growth in \(D\) (implemented via a small bump in \(f_D\)); capital dilution lowers \((Y/L)_D\).
+  \item \textbf{\code{nL\_up}}: higher labor growth in \(L\); dilution lowers \((Y/L)_L\).
+  \item \textbf{\code{abatement\_up}}: stronger mitigation (increase \(\xi_i\) and/or \(\bar\theta_i\)); world \(E\) falls.
+  \item \textbf{\code{ease\_migration}}: policy easing in the rule \(m_t=\min\{\,[\mu\,\varrho_t N_{L,t}-\tau_H]_+,\ \bar m N_{L,t},\ (1+f_L)N_{L,t}\}\).
+\end{enumerate}
+We also include \textbf{\code{ease\_migration\_strong}} (\(\mu\) higher, \(\tau_H\) lower) as a labeled \emph{variant} to illustrate when the textbook dilution sign reappears under persistent tail flows. The orchestrator \code{experiments/runner.py} collects baseline vs.\ shock paths into a single nested object used by plots and tables.\\
+
+
+\noindent\textit{Note:} Endogenous rule vs.\ exogenous $n$. Easing (\(\mu\uparrow,\ \tau_H\downarrow\)) front-loads flows; as \(N_L\) shrinks and \(\varrho_t\) narrows, \(\mu\,\varrho_t N_L-\tau_H\) can decline and tail migration fall below baseline, so \((Y/L)_D\) need not be lower at the horizon. The \code{ease\_migration\_strong} variant shows that when tail flows remain elevated, the textbook dilution sign re-appears.\normalsize
+
+\paragraph{Auxiliary scenario (not part of the four CS shocks).}
+For convenience, the repository also includes a scenario \code{aging\_in\_D} that sets the active-labor share \(\zeta_D\) to a lower constant. This is \emph{not} one of the four headline comparative-statics experiments and is excluded from the CS figures and the comparative-statics CSV (\code{results/cs\_table.csv}); it is provided only as an extra illustration for sensitivity to demographics.
+
+
+
+% =================================================
+\section{Visualization \& tables (Section 8 of 17)}
+% =================================================
+We generate the following figures and CSV tables:
+
+\paragraph{Figures.}
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{Capital dilution panels} for \code{nD\_up} and \code{nL\_up}: left pane \((Y/L)_D\), right pane \((Y/L)_L\), baseline (solid) vs.\ shock (dashed).
+
+  \item \textbf{Emissions \& ratio panels} (all shocks, including the labeled variant): left pane world \(E_t\), right pane \(M_{t+1}/E_t\); shows level shifts and the long-run ratio convergence. We compute the recorded ratio as \(M_{t+1}/E_t\) from stored arrays (shift \(M\) forward one step and divide by current \(E\)).
+  \emph{Limit mapping:} if \(E_{t+1}/E_t\to 1+g_E\) with \((1+g_E)>\phi_M\),
+  \[
+  \frac{M_t}{E_t}\to \frac{1}{(1+g_E)-\phi_M}
+  \quad\Longrightarrow\quad
+  \frac{M_{t+1}}{E_t}\to \frac{1+g_E}{(1+g_E)-\phi_M}.
+  \]
+
+  \item \textbf{Ambiguity map} (parameter \(\eta\) annotated): the threshold \(\xi y=\tfrac{1}{2}\) (holding \(q\) fixed) partitions regions where \(\partial\ln e/\partial\ln y\) is positive vs.\ negative \emph{only when the abatement rule is interior} (\(\theta=\xi y\)). \textbf{If a cap binds} (\(\theta=\bar\theta\) or \(\theta=\sqrt{(1-s)/\kappa}\)), then \(e\propto q^{\eta}y\) and the elasticities are \(1\) in \(y\) and \(\eta\) in \(q\).
+
+  \item \textbf{Migration diagnostics} (for \code{ease\_migration} and \code{ease\_migration\_strong}): \(2\times 2\) panel with \(m_t\), \(\varrho_t\), \(N_{L,t}\), \(L_{D,t}\). Makes the front-loading vs.\ tail-easing mechanism visible. Filenames: \nolinkurl{fig_migration_diagnostics_ease_migration.png}, \nolinkurl{fig_migration_diagnostics_ease_migration_strong.png}.
+\end{itemize}
+
+All figures are written to \code{figures/fig\_*.png} with stable names (shock encoded).
+
+\paragraph{Comparative-statics CSV (results/cs\_table.csv).}
+Columns written by the code:
+\begin{itemize}[leftmargin=1.25em]
+  \item \texttt{Shock}
+  \item \texttt{(Y/L)\_D}, \texttt{(Y/L)\_D \% change}
+  \item \texttt{(Y/L)\_L}, \texttt{(Y/L)\_L \% change}
+  \item \texttt{World E}, \texttt{World E \% change}
+  \item \texttt{M level (if stationary)}, \texttt{M \% change}
+  \item \texttt{M\_\{t+1\}/E\_t (else)}, \texttt{(M\_\{t+1\}/E\_t) \% change}
+\end{itemize}
+
+\noindent If both baseline and shock appear stationary (tail \(g_E \approx 0\) in each), the table compares \(M\) levels. Otherwise it compares tail averages of the recorded ratio \(M_{t+1}/E_t\).
+
+\paragraph{M-column note (conventions).}
+In stationary runs ($g_E=0$), arrows for $M$ mirror $E$ and a level $M^\ast=E^\ast/(1-\phi_M)$ exists.
+Along growth paths ($g_E>0$), the CSV reports the \emph{recorded ratio} \(M_{t+1}/E_t\) columns (arrows and \%\(\Delta\)). (Theory uses \(M_t/E_t \to 1/((1+g_E)-\phi_M)\); the recorded ratio converges to \((1+g_E)/((1+g_E)-\phi_M)\).) To diagnose stationarity, we compute a tail growth estimate \(\hat g_E=\frac{1}{K}\sum_{t=T-K+1}^{T}\big(\ln E_t-\ln E_{t-1}\big)\) with \(K=20\); we treat runs as stationary when \(|\hat g_E|<10^{-3}\).\\
+In non-stationary cases, we therefore report \texttt{M\_\{t+1\}/E\_t} (not \(M_t/E_t\)) in the CSV.
+We set the tail window and threshold as module-level constants in \code{viz/tables.py}: \code{TAIL\_WINDOW\_K=20}, \code{STATIONARY\_ABS\_GROWTH\_THRESHOLD=1e-3}.
+
+\medskip
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Reproduction (one command).} From the repository root:
+\[
+\code{python\ make\_all\_figures.py}
+\]
+This regenerates \emph{all} figures and tables, re-runs baseline checks, and writes a run log to \code{results/run\_summary.txt}.
+\end{mdframed}
+
+
+% =================================================
+\section{Sanity checks \& invariants (Section 9 of 17)}
+% =================================================
+We enforce numerical and logical consistency at two levels: (i) \emph{on-the-fly} checks during simulation, and (ii) \emph{post hoc} checks on stored paths. Table~\ref{tab:invariants} summarizes what is enforced and why it matters.
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{\textbf{Core invariants and their purpose.}}
+  \label{tab:invariants}
+  \begin{tabularx}{\textwidth}{@{} l l Y @{}}
+    \toprule
+    \textbf{Object} & \textbf{Invariant} & \textbf{Why / Notes} \\
+    \midrule
+    Output \& inputs & $K_{i,t}>0$, $A_{i,t}>0$, $L_{i,t}>0$ $\Rightarrow$ $Y_{i,t}>0$ & Cobb--Douglas monotonicity ensures positivity; prevents division by zero. \\
+    Wages & $w_{i,t}=(1-\alpha)Y_{i,t}/L_{i,t}>0$ & Migration rule requires $w_{L,t}>0$ for the relative gap. \\
+    Budget feasibility & $C_{i,t}=(1-s_i-\kappa_i\theta_{i,t}^2)Y_{i,t}\ge 0$ & Guaranteed by $\theta=\min\{\bar\theta,\xi y,\sqrt{(1-s)/\kappa}\}$. \\
+    Migration cap & $0\le m_t \le \min\{\bar m N_{L,t},(1+f_L)N_{L,t}\}$ & Caps flows in \emph{persons}; avoids negative $N_{L,t+1}$. \\
+    Population positivity & $N_{i,t+1}>0$ for all $t$ & With $\bar m\le \min\{1,1+f_L-\text{mig\_slack}\}$. \\
+    BGP ratio condition & If $g_E>0$, require $(1+g_E)>\phi_M$ & Ensures $M_t/E_t\to 1/((1+g_E)-\phi_M)$ is well-defined. \\
+    Solow finiteness & $n^{\text{act}}_i>-\dfrac{\delta+g_A}{1+g_A}$ & Ensures the closed-form $\hat{k}^\ast$ is finite and the fixed point exists. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\paragraph{Where checks live.} Runtime asserts live in \code{model/checks.py} and are called from \code{simulate.py}. Advisory warnings (e.g., BGP condition) do not stop execution but are recorded in the log.
+
+\paragraph{What happens on failure.} Assertions raise a Python \code{AssertionError} (or \code{ValueError}) with a concise message indicating which invariant was violated and at which time step / country.
+
+
+
+% =================================================
+\section{Light testing (Section 10 of 17)}
+% =================================================
+Phase-1 tests are intentionally “unit-size,” fast, and theory-targeted.
+
+\paragraph{Theoretical identities (tests/test\_theory.py; mirrors model Appendix C.1--C.5).}
+\begin{itemize}[leftmargin=1.25em]
+\item \textbf{C.1 (Solow monotonicity):} verifies $\hat{k}^\ast>0$ and the capital-dilution comparative static $\partial \hat{k}^\ast/\partial n<0$ numerically.
+  \item \textbf{C.2 (Elasticity threshold):} for interior abatement $\theta=\xi y$, verifies that $\partial\ln e/\partial\ln y$ changes sign at \(\xi y=\tfrac12\) (holding \(q\) fixed).
+  \item \textbf{C.3 (Carbon ratio limit):} with a synthetic $E_{t+1}/E_t\to 1+g_E$, checks $M_t/E_t\to 1/((1+g_E)-\phi_M)$.
+  \item \textbf{C.4 (Emissions growth on a BGP):} with \(g_A>0\), constant \(\zeta\) and a binding abatement share, construct a synthetic path and verify \(\hat g_{E}\approx (\eta+1)g_A+n^{\text{act}}_{\text{world}}\).
+\item \textbf{C.5 (Budget feasibility across branches):} sample values of \(y\) that make \(\theta\) interior and capped; check \(C=(1-s-\kappa\theta^2)Y\ge 0\) always holds.
+\end{itemize}
+
+\paragraph{Simulation checks (tests/test\_simulation.py).}
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{Smoke \& invariants:} loads \code{params.yaml}, simulates a short horizon, asserts basic positivity and runs the invariant suite.
+  \item \textbf{Sign checks:} under \code{nD\_up} (\code{nL\_up}), $(Y/L)_D$ (resp.\ $(Y/L)_L$) falls relative to baseline; under \code{abatement\_up}, world $E_t$ falls.
+\end{itemize}
+
+\paragraph{How to run.}
+\[
+\code{pytest\ -q\ tests}
+\]
+A clean run shows all tests passing; failures print a minimal counterexample and a hint.
+
+
+
+% =================================================
+\section{Reproducibility harness (Section 11 of 17)}
+% =================================================
+The script \code{make\_all\_figures.py} is the \emph{single-command} generator for all Phase-1 artifacts.
+
+\paragraph{What it does, in order.}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Load \code{params.yaml} with feasibility guards.
+  \item Run the baseline, four shocks (\code{nD\_up}, \code{nL\_up}, \code{abatement\_up}, \code{ease\_migration}) \emph{and} the labeled variant \code{ease\_migration\_strong} for horizon $T$ (default $200$).
+  \item Produce all \textbf{figures} in \code{figures/} and \textbf{tables} in \code{results/}.
+  \item Re-run \textbf{sanity checks} on the baseline simulation.
+  \item Write \code{results/run\_summary.txt} (timestamp, paths, counts).
+\end{enumerate}
+
+\paragraph{How to run.}
+\[
+\code{cd\ <repo-root>\quad \&\quad python\ make\_all\_figures.py}
+\]
+The console prints a clear \texttt{=== Reproducibility run finished successfully ===} when done.
+
+
+
+% =================================================
+\section{Audit script (Section 12 of 17)}
+% =================================================
+\code{audit\_phase1.py} verifies \emph{outputs exist} and \emph{quantitative identities} hold, then prints a compact checklist. Typical output:
+
+\begin{verbatim}
+=== Phase 1 Audit (single-spec) ===
+[PASS] A1.D Solow fixed point (rel err 3.9%, n_hat=0.0021)
+[PASS] A1.L Solow fixed point (rel err 0.8%, n_hat=0.0148)
+[PASS] A2 M/E condition: 1+g_E=1.012 vs phi_M=0.900
+[PASS] B Invariants (positivity & budget)
+[PASS] C nD_up: (Y/L)_D falls
+[PASS] C nL_up: (Y/L)_L falls
+[PASS] C abatement_up: World E falls
+[PASS] D1 Figures generated (12 png files found)
+[PASS] D2 CS table (results/cs_table.csv)
+[PASS] D3 Run summary (results/run_summary.txt)
+
+=== Audit Summary ===
+Passed: 10
+Failed: 0
+\end{verbatim}
+
+\paragraph{Scope.} The audit runs quick, short-horizon simulations (for Solow and sign checks) and inspects artifacts produced by the reproducibility run; it does not regenerate the full figure/table set.
+
+
+
+% =================================================
+\section{How to (re)run, export, and share (Section 13 of 17)}
+% =================================================
+\paragraph{Minimal re-run.}
+\[
+\code{python\ make\_all\_figures.py\quad \&\quad python\ audit\_phase1.py}
+\]
+
+\begin{mdframed}[backgroundcolor=gray!08,linewidth=0.5pt]
+\textbf{Sensitivity sweep (optional).}\quad
+\code{python -m scripts.sweep\_ease\_migration}
+\;writes \code{results/ease\_migration\_sweep.csv} summarizing tail migration changes and signs over a small grid in \(\mu\) and \(\Delta\tau_H\).
+\end{mdframed}
+
+\paragraph{What to send your advisor.}
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{Figures}: \code{figures/*.png} (stable file names).
+  \item \textbf{Tables}: \code{results/cs\_table.csv}.
+  \item \textbf{Run log}: \code{results/run\_summary.txt}.
+  \item \textbf{Params}: \code{params.yaml} (so results are interpretable).
+\end{itemize}
+
+\paragraph{Packaging suggestion.}
+Create a lightweight bundle that excludes \texttt{\_\_pycache\_\_/}:
+
+\begin{Verbatim}[breaklines,breakanywhere,fontsize=\small]
+zip -r phase1_artifact_pack.zip figures results params.yaml README.md requirements.txt environment.yaml
+\end{Verbatim}
+
+
+
+% =================================================
+\section{Environment, determinism, and provenance (Section 14 of 17)}
+% =================================================
+\paragraph{Python \& deps.} Python $\ge 3.10$; \code{numpy}, \code{pandas}, \code{matplotlib}, \code{pytest}, \code{PyYAML}. Non-interactive backend set via \code{MPLBACKEND=Agg} to avoid display coupling.
+
+\paragraph{Re-building the env (recommended).}
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{Conda (if used):} \code{conda env export > environment.yaml} to capture the working set; restore via \code{conda env create -f environment.yaml}.
+  \item \textbf{Pip:} \code{python -m pip freeze > requirements.txt}; restore via \code{python -m pip install -r requirements.txt}.
+\end{itemize}
+
+\paragraph{Install PyYAML explicitly (if not present).}
+\begin{itemize}[leftmargin=1.25em]
+  \item Pip: \code{python -m pip install pyyaml}
+  \item Conda: \code{conda install -y pyyaml}
+\end{itemize}
+
+\paragraph{Determinism.} No PRNG is used in Phase~1; dynamics are deterministic. Figures depend only on \code{params.yaml}. Matplotlib style is default to avoid system-specific fonts.
+
+\paragraph{Provenance.} The runner writes a timestamped \code{run\_summary.txt}; commit the repo before/after a run to pin the exact code state:
+\[
+\code{git\ add\ -A;\ git\ commit\ -m\ "Phase1 reproducibility run";}
+\]
+
+
+
+% =================================================
+\section{File naming and data schemas (Section 15 of 17)}
+% =================================================
+\paragraph{Figures.} Names follow:
+\[
+\code{fig\_<category>\_<shock>.png}
+\]
+Examples: \code{fig\_capital\_dilution\_nD\_up.png}; \code{fig\_emissions\_ratio\_ease\_migration.png}; \code{fig\_ambiguity\_eta-0.30.png}.
+We standardize the ambiguity-map suffix as \code{eta-<two-decimals>} (hyphen + two decimals).
+
+\paragraph{Comparative-statics CSV (results/cs\_table.csv).}
+Columns written by the code:
+\begin{itemize}[leftmargin=1.25em]
+  \item \texttt{Shock}
+  \item \texttt{(Y/L)\_D}, \texttt{(Y/L)\_D \% change}
+  \item \texttt{(Y/L)\_L}, \texttt{(Y/L)\_L \% change}
+  \item \texttt{World E}, \texttt{World E \% change}
+  \item \texttt{M level (if stationary)}, \texttt{M \% change}
+  \item \texttt{M\_\{t+1\}/E\_t (else)}, \texttt{(M\_\{t+1\}/E\_t) \% change}
+\end{itemize}
+Arrow glyphs: “\(\uparrow\)”, “\(\downarrow\)”, “\(\varnothing\)” (no meaningful change), “(n/a)” (not applicable for that branch). The “\(M\)” vs “\(M_{t+1}/E_t\)” choice follows the stationarity rule described in the Visualization section.
+
+\paragraph{Run summary (results/run\_summary.txt).} Plain text: timestamp, repo path, counts of figures/tables, and a note that sanity checks passed.
+
+
+
+% =================================================
+\section{How to extend safely (Section 16 of 17)}
+% =================================================
+\paragraph{Add a new shock.}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Create a helper in \code{experiments/shocks.py} that returns a modified parameter overlay.
+  \item Register it in \code{experiments/runner.py}.
+  \item Add a figure/table stanza if applicable in \code{viz/plots.py} and \code{viz/tables.py}.
+  \item Add at least one sign test in \code{tests/} mirroring the intended effect.
+\end{enumerate}
+
+\paragraph{Add a new figure.}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Implement a pure function in \code{viz/plots.py} that takes model outputs and \code{outdir}.
+  \item Use consistent labeling (axes, legend) and follow the naming scheme.
+  \item Call it from \code{make\_all\_figures.py}.
+\end{enumerate}
+
+\paragraph{Add a new rule or feature.}
+\begin{enumerate}[leftmargin=1.5em]
+  \item Implement the pure function in \code{model/rules.py}.
+  \item Thread the option through \code{params.yaml} $\to$ \code{params.py} $\to$ \code{simulate.py}.
+  \item Update invariants in \code{checks.py} if new caps/feasibility constraints arise.
+  \item Add a minimal unit test in \code{tests/}.
+  \item \textbf{Time-varying active-labor shares:} promote $\zeta_i$ from scalars to paths by threading a per-period schedule through \code{params.yaml} $\to$ \code{params.py} and reading it in \code{simulate.py}; maintain scalar fallback (broadcast over $t$) for backward compatibility.
+\end{enumerate}
+
+\paragraph{Style discipline.} Keep rule functions pure; avoid hidden state; pass primitives explicitly; add docstrings with parameter domains and units.
+
+
+
+% =================================================
+\section{Limitations and next steps (Section 17 of 17)}
+% =================================================
+Phase~1 deliberately omits several elements that are natural targets for Phase~2+:
+\begin{itemize}[leftmargin=1.25em]
+  \item \textbf{No climate damages:} $M$ does not feed back into $Y$; adding a damages block would couple mitigation and growth margins.
+  \item \textbf{No optimization:} countries follow rules; a Ramsey or planner problem would provide welfare metrics and optimal policies.
+  \item \textbf{No cohort demography:} the active-labor toggle is a proxy; overlapping generations or age-structured dynamics would sharpen migration/aging trade-offs.
+  \item \textbf{Calibration \& data:} Phase~1 uses stylized parameters; empirical calibration and sensitivity analysis are natural extensions.
+  \item \textbf{Uncertainty:} all paths are deterministic; stochastic productivity or policy shocks would require seeds and distributional outputs.
+\end{itemize}
+
+\begin{mdframed}[backgroundcolor=gray!10,linewidth=0.5pt]
+\textbf{Phase 2 sketch.} (i) introduce marginal damages and an SCC-style mapping; (ii) calibrate $(\varepsilon,\kappa,\xi,\bar\theta)$ to match historical intensities and MAC curves; (iii) implement welfare accounting; (iv) expand the experiment engine to counterfactual policy packages with sensitivity bands.
+\end{mdframed}
+
+\end{document}

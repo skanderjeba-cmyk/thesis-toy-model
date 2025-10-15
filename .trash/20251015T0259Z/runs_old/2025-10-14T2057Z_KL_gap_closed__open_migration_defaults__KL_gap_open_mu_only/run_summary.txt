@@ -1,0 +1,21 @@
+=== Scenario Run Summary ===
+Timestamp (UTC): 2025-10-14T2057Z
+Repo: C:\Users\skand\thesis-toy-model
+Git commit: 6c14ec5
+Scenario slug: KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only
+Overlays (in order): KL_gap_closed, open_migration_defaults, KL_gap_open_mu_only
+Horizon T: 60
+
+Artifacts:
+  figures/: 16 .png files
+  results/: 1 .csv, 1 .txt
+
+Notes:
+  - Outputs are self-contained under this run directory.
+  - The active params.yaml in repo root has been restored to its original contents.
+
+Canonical professor figures:
+  - fig_capital_dilution_KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only.png: already named
+  - fig_emissions_ratio_KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only.png: already named
+  - fig_wage_ratio_KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only.png: already named
+  - fig_migration_diagnostics_KL_gap_closed__open_migration_defaults__KL_gap_open_mu_only.png: already named
