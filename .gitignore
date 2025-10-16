@@ -35,3 +35,8 @@ _audit*.txt
 
 
 _audit_*.txt
+
+# Local helper artifacts
+_prev_restore/
+diagnostics/
+rescue_report_*/
