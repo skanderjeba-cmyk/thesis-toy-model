@@ -30,3 +30,6 @@ Thumbs.db
 
 .venv/
 
+
+_audit*.txt
+
