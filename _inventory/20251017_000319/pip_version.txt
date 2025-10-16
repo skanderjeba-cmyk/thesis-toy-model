@@ -1,0 +1,3 @@
+﻿pip 25.2 from C:\Users\skand\anaconda3\envs\phase1\Lib\site-packages\pip (python 3.11)
+
+

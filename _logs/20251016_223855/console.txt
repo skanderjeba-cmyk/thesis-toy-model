@@ -1,0 +1,392 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20251016223856
+Username: ALIFANSERVICE\skand
+RunAs User: ALIFANSERVICE\skand
+Configuration Name: 
+Machine: ALIFANSERVICE (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 12204
+PSVersion: 5.1.26100.6899
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.6899
+BuildVersion: 10.0.26100.6899
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+PS C:\Users\skand\thesis-toy-model>
+(base) Write-Host ("[LOG] Writing console transcript to: {0}" -f $logFile) -ForegroundColor Gray
+[LOG] Writing console transcript to: C:\Users\skand\thesis-toy-model\_logs\20251016_223855\console.txt
+PS C:\Users\skand\thesis-toy-model>
+(base) # ------------------------------------------------------------------------------------------------------
+PS C:\Users\skand\thesis-toy-model>
+PS C:\Users\skand\thesis-toy-model>
+(base) try {
+  Write-Section 'A) REPO & ENV INFO'
+  [void](Try-Run -CmdLine 'git remote -v' -Friendly 'Show remotes')
+  [void](Try-Run -CmdLine 'git fetch --prune origin' -Friendly 'Fetch/prune')
+  $status = (git status -sb) 2>$null
+  Write-Host ("git status -sb: {0}" -f $status) -ForegroundColor Gray
+  $HEAD   = (git rev-parse HEAD) 2>$null
+  $ORIGIN = (git rev-parse origin/main) 2>$null
+  Write-Host ("HEAD:        {0}" -f $HEAD)
+  Write-Host ("origin/main: {0}" -f $ORIGIN)
+
+  [void](Try-Run -CmdLine (PyCmd '--version') -Friendly 'Python version')
+  [void](Try-Run -CmdLine (PyCmd '-m pip --version') -Friendly 'pip version')
+
+  if ($DoPipInstall -and (Test-Path '.\requirements.txt')) {
+    Write-Section 'B) DEPENDENCIES (requirements.txt)'
+    [void](Try-Run -CmdLine (PyCmd '-m pip install -U pip') -Friendly 'Upgrade pip')
+    [void](Try-Run -CmdLine (PyCmd '-m pip install -r requirements.txt') -Friendly 'Install dependencies')
+  } else {
+    Write-Host 'No requirements.txt or install skipped - continuing.' -ForegroundColor Gray
+  }
+
+  Write-Section 'C) RESET OUTPUTS (safe backup)'
+  $bkRoot = Join-Path $RepoPath ("_prev\{0}" -f (ShortStamp))
+  foreach ($d in $OutDirs) { Backup-And-Empty $d $bkRoot }
+
+  Write-Section 'D) TESTS'
+  $pytestCmd = 'pytest -q'
+  if ($UseConda) { $pytestCmd = ("conda run -n {0} pytest -q" -f $EnvName) }
+  [void](Try-Run -CmdLine $pytestCmd -Friendly 'pytest (quiet)')
+
+  Write-Section 'E) SCENARIOS'
+  $ranScenario = $false
+
+  # 1) Try run_scenarios.py with likely presets
+  if (Test-Path '.\run_scenarios.py') {
+    $scenarioAttempts = @(
+      "--scenarios all --T 200 --outroot runs --keep-root-outputs",
+      "--scenarios canon --T 200 --outroot runs --keep-root-outputs",
+      "--scenarios A,B,C1,C2 --T 200 --outroot runs --keep-root-outputs",
+      "-h"  # last resort: show help so user can see valid options in the transcript
+    )
+    foreach ($args in $scenarioAttempts) {
+      if (-not $ranScenario) {
+        $ranScenario = Try-Run -CmdLine (PyCmd ("run_scenarios.py {0}" -f $args)) -Friendly ("python run_scenarios.py {0}" -f $args)
+      }
+    }
+  }
+
+  # 2) If that didn't work but experiments\shocks.py exists, run it with PYTHONPATH set to repo root
+  if (-not $ranScenario -and (Test-Path '.\experiments\shocks.py')) {
+    # We run through cmd, so use 'set "PYTHONPATH=%CD%" && ...'
+    $cmd = 'set "PYTHONPATH=%CD%" && ' + (PyCmd 'experiments\shocks.py')
+    $ranScenario = Try-Run -CmdLine $cmd -Friendly 'python experiments\shocks.py (with PYTHONPATH)'
+  }
+
+  if (-not $ranScenario) {
+    Write-Host 'No scenario entry point ran (run_scenarios.py or experiments\shocks.py). Skipping.' -ForegroundColor Yellow
+  }
+
+  Write-Section 'F) FIGURES'
+  $ranFigs = $false
+  if (Test-Path '.\make_all_figures.py') {
+    $ranFigs = Try-Run -CmdLine (PyCmd 'make_all_figures.py') -Friendly 'python make_all_figures.py'
+  } else {
+    Write-Host 'make_all_figures.py not found - skipping.' -ForegroundColor Yellow
+  }
+
+  Write-Section 'G) AUDIT'
+  $auditOK = $false
+  if (Test-Path '.\audit_phase1.py') {
+    $auditOK = Try-Run -CmdLine (PyCmd 'audit_phase1.py') -Friendly 'python audit_phase1.py'
+  } else {
+    Write-Host 'audit_phase1.py not found - skipping.' -ForegroundColor Yellow
+  }
+
+  Write-Section 'H) QUICK SANITY'
+  $needFigs   = Get-ChildItem -Recurse -File -EA SilentlyContinue .\figures\*.png
+  $needCSTbl  = Test-Path .\results\cs_table.csv
+  $needRunSum = Test-Path .\results\run_summary.txt
+
+  Write-Host ("Figures (*.png) found: {0}" -f (@($needFigs).Count))
+  Write-Host ("CS table exists:       {0}" -f $needCSTbl)
+  Write-Host ("Run summary exists:    {0}" -f $needRunSum)
+
+  Write-Section 'I) SUMMARY'
+  $notes = @()
+  if ($HEAD -ne $ORIGIN)        { $notes += 'Local HEAD differs from origin/main (not critical for running).' }
+  # Only note missing scenarios if artifacts/audit didn’t succeed
+  if (-not $ranScenario -and ((@($needFigs).Count -eq 0) -or (-not $auditOK))) {
+    $notes += 'Scenario run step did not execute (no known entry point succeeded).'
+  }
+  if (-not $ranFigs)            { $notes += 'Figure generation step skipped or failed.' }
+  if (-not $auditOK)            { $notes += 'Audit step failed or flagged issues.' }
+  if (@($needFigs).Count -eq 0) { $notes += 'No PNG figures under ./figures.' }
+  if (-not $needCSTbl)          { $notes += 'Missing results/cs_table.csv.' }
+  if (-not $needRunSum)         { $notes += 'Missing results/run_summary.txt.' }
+
+  if ($notes.Count -eq 0) {
+    Write-Host 'OK: Reproduction complete. All expected artifacts present.' -ForegroundColor Green
+  } else {
+    Write-Host 'Finished with notes:' -ForegroundColor Yellow
+    $notes | ForEach-Object { Write-Host (" - {0}" -f $_) -ForegroundColor Yellow }
+    Write-Host ''
+    Write-Host ("See full log: {0}" -f $logFile) -ForegroundColor Gray
+  }
+
+} catch {
+  Write-Host ''
+  Write-Host ("FATAL: {0}" -f $_.Exception.Message) -ForegroundColor Red
+  Write-Host ("See transcript: {0}" -f $logFile) -ForegroundColor Gray
+} finally {
+  Stop-Transcript 2>$null | Out-Null
+  Write-Host ''
+  Read-Host 'Done. Press Enter to close' | Out-Null
+}
+
+=== A) REPO & ENV INFO ===
+
+-> Show remotes
+   git remote -v
+origin	https://github.com/skanderjeba-cmyk/thesis-toy-model.git (fetch)
+origin	https://github.com/skanderjeba-cmyk/thesis-toy-model.git (push)
+
+-> Fetch/prune
+   git fetch --prune origin
+git status -sb: ## main...origin/main
+HEAD:        c38ac091ae1abafb817bf074ba4bd49fa1e7f5cc
+origin/main: c38ac091ae1abafb817bf074ba4bd49fa1e7f5cc
+
+-> Python version
+   conda run -n phase1 python --version
+Python 3.11.13
+
+-> pip version
+   conda run -n phase1 python -m pip --version
+pip 25.2 from C:\Users\skand\anaconda3\envs\phase1\Lib\site-packages\pip (python 3.11)
+
+=== B) DEPENDENCIES (requirements.txt) ===
+
+-> Upgrade pip
+   conda run -n phase1 python -m pip install -U pip
+Requirement already satisfied: pip in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (25.2)
+
+-> Install dependencies
+   conda run -n phase1 python -m pip install -r requirements.txt
+Requirement already satisfied: anyio==4.11.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 1)) (4.11.0)
+Requirement already satisfied: argon2-cffi==25.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 2)) (25.1.0)
+Requirement already satisfied: argon2-cffi-bindings==25.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 3)) (25.1.0)
+Requirement already satisfied: arrow==1.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 4)) (1.3.0)
+Requirement already satisfied: asttokens==3.0.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 5)) (3.0.0)
+Requirement already satisfied: async-lru==2.0.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 6)) (2.0.5)
+Requirement already satisfied: attrs==25.4.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 7)) (25.4.0)
+Requirement already satisfied: babel==2.17.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 8)) (2.17.0)
+Requirement already satisfied: beautifulsoup4==4.14.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 9)) (4.14.2)
+Requirement already satisfied: bleach==6.2.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 10)) (6.2.0)
+Requirement already satisfied: certifi==2025.10.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 11)) (2025.10.5)
+Requirement already satisfied: cffi==2.0.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 12)) (2.0.0)
+Requirement already satisfied: charset-normalizer==3.4.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 13)) (3.4.3)
+Requirement already satisfied: colorama==0.4.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 14)) (0.4.6)
+Requirement already satisfied: comm==0.2.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 15)) (0.2.3)
+Requirement already satisfied: contourpy==1.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 16)) (1.3.3)
+Requirement already satisfied: cycler==0.12.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 17)) (0.12.1)
+Requirement already satisfied: debugpy==1.8.17 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 18)) (1.8.17)
+Requirement already satisfied: decorator==5.2.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 19)) (5.2.1)
+Requirement already satisfied: defusedxml==0.7.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 20)) (0.7.1)
+Requirement already satisfied: executing==2.2.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 21)) (2.2.1)
+Requirement already satisfied: fastjsonschema==2.21.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 22)) (2.21.2)
+Requirement already satisfied: fonttools==4.60.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 23)) (4.60.1)
+Requirement already satisfied: fqdn==1.5.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 24)) (1.5.1)
+Requirement already satisfied: h11==0.16.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 25)) (0.16.0)
+Requirement already satisfied: httpcore==1.0.9 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 26)) (1.0.9)
+Requirement already satisfied: httpx==0.28.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 27)) (0.28.1)
+Requirement already satisfied: idna==3.10 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 28)) (3.10)
+Requirement already satisfied: iniconfig==2.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 29)) (2.1.0)
+Requirement already satisfied: ipykernel==6.30.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 30)) (6.30.1)
+Requirement already satisfied: ipython==9.6.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 31)) (9.6.0)
+Requirement already satisfied: ipython_pygments_lexers==1.1.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 32)) (1.1.1)
+Requirement already satisfied: isoduration==20.11.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 33)) (20.11.0)
+Requirement already satisfied: jedi==0.19.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 34)) (0.19.2)
+Requirement already satisfied: Jinja2==3.1.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 35)) (3.1.6)
+Requirement already satisfied: json5==0.12.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 36)) (0.12.1)
+Requirement already satisfied: jsonpointer==3.0.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 37)) (3.0.0)
+Requirement already satisfied: jsonschema==4.25.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 38)) (4.25.1)
+Requirement already satisfied: jsonschema-specifications==2025.9.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 39)) (2025.9.1)
+Requirement already satisfied: jupyter-events==0.12.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 40)) (0.12.0)
+Requirement already satisfied: jupyter-lsp==2.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 41)) (2.3.0)
+Requirement already satisfied: jupyter_client==8.6.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 42)) (8.6.3)
+Requirement already satisfied: jupyter_core==5.8.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 43)) (5.8.1)
+Requirement already satisfied: jupyter_server==2.17.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 44)) (2.17.0)
+Requirement already satisfied: jupyter_server_terminals==0.5.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 45)) (0.5.3)
+Requirement already satisfied: jupyterlab==4.4.9 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 46)) (4.4.9)
+Requirement already satisfied: jupyterlab_pygments==0.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 47)) (0.3.0)
+Requirement already satisfied: jupyterlab_server==2.27.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 48)) (2.27.3)
+Requirement already satisfied: kiwisolver==1.4.9 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 49)) (1.4.9)
+Requirement already satisfied: lark==1.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 50)) (1.3.0)
+Requirement already satisfied: MarkupSafe==3.0.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 51)) (3.0.3)
+Requirement already satisfied: matplotlib==3.10.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 52)) (3.10.6)
+Requirement already satisfied: matplotlib-inline==0.1.7 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 53)) (0.1.7)
+Requirement already satisfied: mistune==3.1.4 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 54)) (3.1.4)
+Requirement already satisfied: nbclient==0.10.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 55)) (0.10.2)
+Requirement already satisfied: nbconvert==7.16.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 56)) (7.16.6)
+Requirement already satisfied: nbformat==5.10.4 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 57)) (5.10.4)
+Requirement already satisfied: nest-asyncio==1.6.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 58)) (1.6.0)
+Requirement already satisfied: notebook_shim==0.2.4 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 59)) (0.2.4)
+Requirement already satisfied: numpy==2.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 60)) (2.3.3)
+Requirement already satisfied: overrides==7.7.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 61)) (7.7.0)
+Requirement already satisfied: packaging==25.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 62)) (25.0)
+Requirement already satisfied: pandas==2.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 63)) (2.3.3)
+Requirement already satisfied: pandocfilters==1.5.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 64)) (1.5.1)
+Requirement already satisfied: parso==0.8.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 65)) (0.8.5)
+Requirement already satisfied: pillow==11.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 66)) (11.3.0)
+Requirement already satisfied: platformdirs==4.4.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 67)) (4.4.0)
+Requirement already satisfied: pluggy==1.6.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 68)) (1.6.0)
+Requirement already satisfied: prometheus_client==0.23.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 69)) (0.23.1)
+Requirement already satisfied: prompt_toolkit==3.0.52 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 70)) (3.0.52)
+Requirement already satisfied: psutil==7.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 71)) (7.1.0)
+Requirement already satisfied: pure_eval==0.2.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 72)) (0.2.3)
+Requirement already satisfied: pycparser==2.23 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 73)) (2.23)
+Requirement already satisfied: Pygments==2.19.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 74)) (2.19.2)
+Requirement already satisfied: pyparsing==3.2.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 75)) (3.2.5)
+Requirement already satisfied: pytest==8.4.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 76)) (8.4.2)
+Requirement already satisfied: python-dateutil==2.9.0.post0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 77)) (2.9.0.post0)
+Requirement already satisfied: python-json-logger==4.0.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 78)) (4.0.0)
+Requirement already satisfied: pytz==2025.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 79)) (2025.2)
+Requirement already satisfied: pywin32==311 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 80)) (311)
+Requirement already satisfied: pywinpty==3.0.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 81)) (3.0.2)
+Requirement already satisfied: PyYAML==6.0.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 82)) (6.0.3)
+Requirement already satisfied: pyzmq==27.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 83)) (27.1.0)
+Requirement already satisfied: referencing==0.36.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 84)) (0.36.2)
+Requirement already satisfied: requests==2.32.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 85)) (2.32.5)
+Requirement already satisfied: rfc3339-validator==0.1.4 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 86)) (0.1.4)
+Requirement already satisfied: rfc3986-validator==0.1.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 87)) (0.1.1)
+Requirement already satisfied: rfc3987-syntax==1.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 88)) (1.1.0)
+Requirement already satisfied: rpds-py==0.27.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 89)) (0.27.1)
+Requirement already satisfied: Send2Trash==1.8.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 90)) (1.8.3)
+Requirement already satisfied: six==1.17.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 91)) (1.17.0)
+Requirement already satisfied: sniffio==1.3.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 92)) (1.3.1)
+Requirement already satisfied: soupsieve==2.8 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 93)) (2.8)
+Requirement already satisfied: stack-data==0.6.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 94)) (0.6.3)
+Requirement already satisfied: terminado==0.18.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 95)) (0.18.1)
+Requirement already satisfied: tinycss2==1.4.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 96)) (1.4.0)
+Requirement already satisfied: tornado==6.5.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 97)) (6.5.2)
+Requirement already satisfied: traitlets==5.14.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 98)) (5.14.3)
+Requirement already satisfied: types-python-dateutil==2.9.0.20250822 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 99)) (2.9.0.20250822)
+Requirement already satisfied: typing_extensions==4.15.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 100)) (4.15.0)
+Requirement already satisfied: tzdata==2025.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 101)) (2025.2)
+Requirement already satisfied: uri-template==1.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 102)) (1.3.0)
+Requirement already satisfied: urllib3==2.5.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 103)) (2.5.0)
+Requirement already satisfied: wcwidth==0.2.14 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 104)) (0.2.14)
+Requirement already satisfied: webcolors==24.11.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 105)) (24.11.1)
+Requirement already satisfied: webencodings==0.5.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 106)) (0.5.1)
+Requirement already satisfied: websocket-client==1.9.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 107)) (1.9.0)
+Requirement already satisfied: setuptools>=41.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from jupyterlab==4.4.9->-r requirements.txt (line 46)) (78.1.1)
+
+=== C) RESET OUTPUTS (safe backup) ===
+  Backing up 'figures' -> 'C:\Users\skand\thesis-toy-model\_prev\20251016_223915\figures' ...
+  Backing up 'results' -> 'C:\Users\skand\thesis-toy-model\_prev\20251016_223915\results' ...
+  Backing up 'runs' -> 'C:\Users\skand\thesis-toy-model\_prev\20251016_223915\runs' ...
+
+=== D) TESTS ===
+
+-> pytest (quiet)
+   conda run -n phase1 pytest -q
+............                                                             [100%]
+12 passed, 1 deselected in 5.48s
+
+=== E) SCENARIOS ===
+
+-> python run_scenarios.py --scenarios all --T 200 --outroot runs --keep-root-outputs
+   conda run -n phase1 python run_scenarios.py --scenarios all --T 200 --outroot runs --keep-root-outputs
+ERROR: overlay file(s) not found:
+  C:\Users\skand\thesis-toy-model\scenarios\all.yaml
+
+ERROR conda.cli.main_run:execute(127): `conda run python run_scenarios.py --scenarios all --T 200 --outroot runs --keep-root-outputs` failed. (See above for error)
+X Exit code: 2
+
+-> python run_scenarios.py --scenarios canon --T 200 --outroot runs --keep-root-outputs
+   conda run -n phase1 python run_scenarios.py --scenarios canon --T 200 --outroot runs --keep-root-outputs
+ERROR: overlay file(s) not found:
+  C:\Users\skand\thesis-toy-model\scenarios\canon.yaml
+
+ERROR conda.cli.main_run:execute(127): `conda run python run_scenarios.py --scenarios canon --T 200 --outroot runs --keep-root-outputs` failed. (See above for error)
+X Exit code: 2
+
+-> python run_scenarios.py --scenarios A,B,C1,C2 --T 200 --outroot runs --keep-root-outputs
+   conda run -n phase1 python run_scenarios.py --scenarios A,B,C1,C2 --T 200 --outroot runs --keep-root-outputs
+ERROR: overlay file(s) not found:
+  C:\Users\skand\thesis-toy-model\scenarios\A.yaml
+  C:\Users\skand\thesis-toy-model\scenarios\B.yaml
+  C:\Users\skand\thesis-toy-model\scenarios\C1.yaml
+  C:\Users\skand\thesis-toy-model\scenarios\C2.yaml
+
+ERROR conda.cli.main_run:execute(127): `conda run python run_scenarios.py --scenarios A,B,C1,C2 --T 200 --outroot runs --keep-root-outputs` failed. (See above for error)
+X Exit code: 2
+
+-> python run_scenarios.py -h
+   conda run -n phase1 python run_scenarios.py -h
+usage: run_scenarios.py [-h] --scenarios SCENARIOS [--outroot OUTROOT] [--T T]
+                        [--keep-root-outputs] [--strict-one-knob]
+
+Scenario runner that archives outputs into runs/ and prepares canonical
+figures
+
+options:
+  -h, --help            show this help message and exit
+  --scenarios SCENARIOS
+                        Comma-separated overlay names (files must exist under
+                        scenarios/), applied in order.
+  --outroot OUTROOT     Root output folder (default: C:\Users\skand\thesis-
+                        toy-model\runs)
+  --T T                 Optional horizon override; applied on top of merged
+                        YAML before the run.
+  --keep-root-outputs   Do not delete or move figures/ and results/ in repo
+                        root after the run.
+  --strict-one-knob     Fail the run if an 'open_*_only' overlay changes more
+                        than the intended single knob.
+
+=== F) FIGURES ===
+
+-> python make_all_figures.py
+   conda run -n phase1 python make_all_figures.py
+=== Reproducibility run started ===
+Timestamp (local): 2025-10-16T22:39:44
+Working directory: C:\Users\skand\thesis-toy-model
+Loaded params.yaml successfully.
+Experiments completed (T=200).
+Figures generated into figures/*.png (count ~= 12).
+Comparative-statics table saved to C:\Users\skand\thesis-toy-model\results\cs_table.csv
+Sanity checks passed on baseline simulation.
+Wrote summary: C:\Users\skand\thesis-toy-model\results\run_summary.txt
+=== Reproducibility run finished successfully ===
+
+=== G) AUDIT ===
+
+-> python audit_phase1.py
+   conda run -n phase1 python audit_phase1.py
+=== Phase 1 Audit (single-spec) ===
+[INFO] Repo: C:\Users\skand\thesis-toy-model
+[PASS] A1.D Solow fixed point (rel err 0.696%, n_hat=0.0090)
+[PASS] A1.L Solow fixed point (rel err 0.507%, n_hat=0.0000)
+[PASS] A2 M/E condition: 1+g_E=1.003 vs phi_M=0.900
+[INFO] A2 recorded ratio tail  ~ 9.7524
+[INFO] A2 theory recorded limit ~ 9.7528 (abs % err vs tail: 0.00%)
+[PASS] B Invariants (positivity & budget)
+[PASS] C nD_up: (Y/L)_D falls
+[PASS] C nL_up: (Y/L)_L falls
+[PASS] C abatement_up: World E falls
+[PASS] D1 Figures generated (12 png files found)
+[PASS] D2 CS table (results/cs_table.csv)
+[PASS] D3 Run summary (results/run_summary.txt)
+
+=== Audit Summary ===
+Passed: 10
+Failed: 0
+
+=== H) QUICK SANITY ===
+Figures (*.png) found: 12
+CS table exists:       True
+Run summary exists:    True
+
+=== I) SUMMARY ===
+OK: Reproduction complete. All expected artifacts present.
+**********************
+Windows PowerShell transcript end
+End time: 20251016223952
+**********************
