@@ -1,51 +1,32 @@
-# Byte-compiled / cache
+# Project outputs we don't want in Git
+runs/
+figures/
+results/
+.trash/
+
+# Python caches / notebooks clutter
 __pycache__/
-*.py[cod]
-*.so
-
-# Jupyter
+*.pyc
+*.pyo
 .ipynb_checkpoints/
-*.ipynb_meta
+.pytest_cache/
+.mypy_cache/
 
-# Builds / metadata
-*.egg-info/
-dist/
-build/
-
-# OS cruft
+# Editors/OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
 
-# Envs & secrets
-.env
-.venv
-.env.local
-
-# Project outputs
-results/
-figures/
-
-# IDEs
-.vscode/
-.idea/
- 
-runs/
-
-prof_pack_step4.zip
-# Archives / run packs
+# Archives and LaTeX temp
 *.zip
-# Archives / run packs
-*.zip
-
-# Auto: workspace outputs & caches
-.pytest_cache/
-*.pyc
-*.pyo
-*.synctex.gz
-prof_pack_*.zip
 *.aux
 *.log
 *.out
 *.toc
+*.synctex.gz
 *.bbl
 *.blg
+
+.venv/
+
