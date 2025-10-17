@@ -1,0 +1,5 @@
+﻿# Fertility gap (pair), medium: D: 0.010, L: 0.020
+# One idea only: change 'countries.*.f' and nothing else.
+countries:
+  D: { f: 0.010 }
+  L: { f: 0.020 }
