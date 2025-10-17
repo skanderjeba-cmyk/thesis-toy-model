@@ -106,8 +106,6 @@ def move_outputs_into(run_dir: Path) -> Dict[str, int]:
     return counts
 
 # ---------- Step 4: canonical figure helpers ----------
-from typing import Tuple
-
 def _pick_by_base(
     fig_dir: Path,
     base: str,
@@ -197,6 +195,17 @@ def append_professor_figs_summary_into_results(run_dir: Path, mapping: Dict[str,
         f.write("\n".join(lines) + "\n")
 
 # ---------- Overlay diff & one-knob enforcement (Step 5, SCOPED) ----------
+
+# Map of identifying substrings in overlay filenames -> exact set of allowed dotted keys
+ONE_KNOB_RULES: Dict[str, set] = {
+    # legacy KL names
+    "kl_gap_open_mu_only": {"migration.mu"},
+    "kl_gap_open_tauh_only": {"migration.tau_H"},
+    # generic names used for any chain
+    "open_mu_only": {"migration.mu"},
+    "open_tauh_only": {"migration.tau_H"},
+}
+
 def _flatten(d: Any, prefix: str = "", out: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if out is None:
         out = {}
@@ -226,10 +235,17 @@ def _changed_keys(prev: Dict[str, Any], curr: Dict[str, Any]) -> List[str]:
     diffs.sort()
     return diffs
 
+def _allowed_keys_for_overlay(name_lower: str) -> Optional[set]:
+    for key_substr, allowed in ONE_KNOB_RULES.items():
+        if key_substr in name_lower:
+            return set(allowed)
+    return None
+
 def build_overlay_diff_report(base_cfg: Dict[str, Any], overlay_names: List[str]) -> Tuple[List[str], List[str]]:
     """
     Returns (report_lines, violations).
-    The SCOPED rule only triggers on overlays whose name contains 'open_mu_only' or 'open_tauH_only'.
+    The SCOPED rule only triggers for overlays whose filename contains
+    any key in ONE_KNOB_RULES (case-insensitive).
     """
     states = [dict(base_cfg)]
     for name in overlay_names:
@@ -246,17 +262,20 @@ def build_overlay_diff_report(base_cfg: Dict[str, Any], overlay_names: List[str]
         line = f"  [{i}] {name} -> changed: {human}"
 
         lname = name.lower()
-        mig = [k for k in changed if k.startswith("migration.")]
-        if "open_mu_only" in lname:
-            if mig == ["migration.mu"]:
-                line += "  [OK one-knob: mu]"
+        allowed = _allowed_keys_for_overlay(lname)
+        if allowed is not None:
+            # Enforce that the set of ALL changed keys equals the allowed set.
+            changed_set = set(changed)
+            if changed_set == allowed:
+                # Pretty tag
+                if "mu" in next(iter(allowed)):
+                    line += "  [OK one-knob: mu]"
+                else:
+                    line += "  [OK one-knob: tau_H]"
             else:
-                violations.append(f"    VIOLATION in {name}: expected only migration.mu to change; got {mig or 'none'}")
-        elif "open_tauh_only" in lname:
-            if mig == ["migration.tau_H"]:
-                line += "  [OK one-knob: tau_H]"
-            else:
-                violations.append(f"    VIOLATION in {name}: expected only migration.tau_H to change; got {mig or 'none'}")
+                violations.append(
+                    f"    VIOLATION in {name}: expected ONLY {sorted(allowed)}; got {sorted(changed) or 'none'}"
+                )
 
         lines.append(line)
 
