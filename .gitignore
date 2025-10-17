@@ -55,3 +55,18 @@ inventory_manifest.csv
 inventory_tree.txt
 prof_pack*.zip
 phase*_artifact_pack.zip
+# === Auto snapshots & logs (do not track) ===
+_forensics/
+_inventory/
+_safety_audit/
+_logs/
+runs_restored_latest/
+
+# === Generated listings & packages ===
+inventory_manifest.csv
+inventory_tree.txt
+prof_pack*.zip
+phase*_artifact_pack.zip
+
+# === Stray notebooks at repo root ===
+/Untitled*.ipynb
