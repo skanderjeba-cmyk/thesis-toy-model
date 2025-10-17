@@ -12,17 +12,22 @@ the best-matching generated PNGs to canonical filenames:
   - fig_wage_ratio_<scenario>.png            (optional)
   - fig_migration_diagnostics_<scenario>.png (optional)
 
-Step 5: One-knob guard (SCOPED)
+Step 5: Overlay diff + one-knob guard
   - Builds an overlay diff report (which dotted keys changed at each overlay).
   - Enforces that overlays whose name contains 'open_mu_only' change ONLY migration.mu,
     and overlays whose name contains 'open_tauH_only' change ONLY migration.tau_H,
     relative to the state just before that overlay is applied.
   - Adds --strict-one-knob to fail the run if those specific overlays violate the rule.
+
+Windows path safety
+  - Run directory names are shortened (compact timestamp + 8-char hash) to avoid MAX_PATH issues
+    while keeping full <scenario slug> in figure filenames.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -72,7 +77,8 @@ def git_commit_hash() -> str:
         return "NA"
 
 def iso_stamp_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+    # Compact (no hyphens) to save path length on Windows
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%MZ")
 
 def ensure_clean_root_outputs(keep: bool) -> None:
     if keep:
@@ -194,7 +200,7 @@ def append_professor_figs_summary_into_results(run_dir: Path, mapping: Dict[str,
     with summary_path.open("a", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
 
-# ---------- Overlay diff & one-knob enforcement (Step 5, SCOPED) ----------
+# ---------- Overlay diff & one-knob enforcement (Step 5) ----------
 
 # Map of identifying substrings in overlay filenames -> exact set of allowed dotted keys
 ONE_KNOB_RULES: Dict[str, set] = {
@@ -244,8 +250,7 @@ def _allowed_keys_for_overlay(name_lower: str) -> Optional[set]:
 def build_overlay_diff_report(base_cfg: Dict[str, Any], overlay_names: List[str]) -> Tuple[List[str], List[str]]:
     """
     Returns (report_lines, violations).
-    The SCOPED rule only triggers for overlays whose filename contains
-    any key in ONE_KNOB_RULES (case-insensitive).
+    The rule only triggers for overlays whose filename contains any key in ONE_KNOB_RULES (case-insensitive).
     """
     states = [dict(base_cfg)]
     for name in overlay_names:
@@ -264,10 +269,8 @@ def build_overlay_diff_report(base_cfg: Dict[str, Any], overlay_names: List[str]
         lname = name.lower()
         allowed = _allowed_keys_for_overlay(lname)
         if allowed is not None:
-            # Enforce that the set of ALL changed keys equals the allowed set.
             changed_set = set(changed)
             if changed_set == allowed:
-                # Pretty tag
                 if "mu" in next(iter(allowed)):
                     line += "  [OK one-knob: mu]"
                 else:
@@ -345,8 +348,12 @@ def main() -> int:
     outroot.mkdir(parents=True, exist_ok=True)
 
     scen_slug = "__".join(overlay_names)
-    run_dir = outroot / f"{iso_stamp_utc()}_{scen_slug}"
+    # Short, Windows-safe run directory (keep full scen_slug only in filenames & logs)
+    short_id = hashlib.sha1(scen_slug.encode("utf-8")).hexdigest()[:8]
+    run_dir = outroot / f"{iso_stamp_utc()}_{short_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    # Record the full slug for auditability
+    (run_dir / "scenario_slug.txt").write_text(scen_slug + "\n", encoding="utf-8")
 
     base_cfg = load_yaml(PARAMS_PATH)
     merged_cfg = dict(base_cfg)
@@ -357,9 +364,10 @@ def main() -> int:
         merged_cfg.setdefault("simulation", {})
         merged_cfg["simulation"]["T"] = int(args.T)
 
-    # diff + scoped one-knob check
+    # diff + one-knob check
     overlay_diff_lines, one_knob_violations = build_overlay_diff_report(base_cfg, overlay_names)
 
+    # Validate via model.params loader (domain checks, etc.)
     try:
         _ = load_params_with_overlays(str(PARAMS_PATH), [str(p) for p in overlay_paths])
     except Exception as e:
@@ -396,7 +404,6 @@ def main() -> int:
         append_overlay_diff_report(run_dir, overlay_diff_lines)
 
         if args.strict_one_knob and one_knob_violations:
-            # strict mode fails ONLY when those targeted overlays violated
             print("One-knob violations detected:\n" + "\n".join(one_knob_violations), file=sys.stderr)
             print("=== Scenario run finished with one-knob violations (strict mode) ===")
             print(f"Run directory: {run_dir}")
