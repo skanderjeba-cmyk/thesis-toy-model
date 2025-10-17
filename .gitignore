@@ -70,3 +70,5 @@ phase*_artifact_pack.zip
 
 # === Stray notebooks at repo root ===
 /Untitled*.ipynb
+
+notebooks/scratch/
