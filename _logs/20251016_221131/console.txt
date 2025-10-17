@@ -1,0 +1,187 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20251016221131
+Username: ALIFANSERVICE\skand
+RunAs User: ALIFANSERVICE\skand
+Configuration Name: 
+Machine: ALIFANSERVICE (Microsoft Windows NT 10.0.26100.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+Process ID: 21480
+PSVersion: 5.1.26100.6899
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.6899
+BuildVersion: 10.0.26100.6899
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+PS C:\Users\skand\thesis-toy-model>
+(base) Write-Host ("[LOG] Writing console transcript to: {0}" -f $logFile) -ForegroundColor Gray
+[LOG] Writing console transcript to: C:\Users\skand\thesis-toy-model\_logs\20251016_221131\console.txt
+PS C:\Users\skand\thesis-toy-model>
+(base) # ------------------------------------------------------------------------------------------------------
+PS C:\Users\skand\thesis-toy-model>
+PS C:\Users\skand\thesis-toy-model>
+(base) try {
+  Write-Section "A) REPO & ENV INFO"
+  [void](Try-Run -CmdLine "git remote -v" -Friendly "Show remotes")
+  [void](Try-Run -CmdLine "git fetch --prune origin" -Friendly "Fetch/prune")
+  $status = (git status -sb) 2>$null
+  Write-Host ("git status -sb: {0}" -f $status) -ForegroundColor Gray
+  $HEAD   = (git rev-parse HEAD) 2>$null
+  $ORIGIN = (git rev-parse origin/main) 2>$null
+  Write-Host ("HEAD:        {0}" -f $HEAD)
+  Write-Host ("origin/main: {0}" -f $ORIGIN)
+
+  [void](Try-Run -CmdLine (PyCmd "--version") -Friendly "Python version")
+  [void](Try-Run -CmdLine (PyCmd "-m pip --version") -Friendly "pip version")
+
+  if ($DoPipInstall -and (Test-Path ".\requirements.txt")) {
+    Write-Section "B) DEPENDENCIES (requirements.txt)"
+    # Best-effort upgrade pip (non-fatal)
+    [void](Try-Run -CmdLine (PyCmd "-m pip install -U pip") -Friendly "Upgrade pip")
+    [void](Try-Run -CmdLine (PyCmd "-m pip install -r requirements.txt") -Friendly "Install dependencies")
+  } else {
+    Write-Host "No requirements.txt or install skipped - continuing." -ForegroundColor Gray
+  }
+
+  Write-Section "C) RESET OUTPUTS (safe backup)"
+  $bkRoot = Join-Path $RepoPath ("_prev\{0}" -f (ShortStamp))
+  foreach ($d in $OutDirs) { Backup-And-Empty $d $bkRoot }
+
+  Write-Section "D) TESTS"
+  # If pytest isn't installed, this may fail; it's OK (we keep going).
+  [void](Try-Run -CmdLine (if ($UseConda) { "conda run -n $EnvName pytest -q" } else { "pytest -q" }) -Friendly "pytest (quiet)")
+
+  Write-Section "E) SCENARIOS"
+  $ranScenario = $false
+  if (-not $ranScenario -and (Test-Path ".\run_scenarios.py")) {
+    $ranScenario = Try-Run -CmdLine (PyCmd "run_scenarios.py") -Friendly "python run_scenarios.py"
+  }
+  if (-not $ranScenario -and (Test-Path ".\experiments\shocks.py")) {
+    $ranScenario = Try-Run -CmdLine (PyCmd "experiments\shocks.py") -Friendly "python experiments\shocks.py"
+  }
+  if (-not $ranScenario) {
+    Write-Host "No scenario entry point ran (run_scenarios.py or experiments\shocks.py). Skipping." -ForegroundColor Yellow
+  }
+
+  Write-Section "F) FIGURES"
+  $ranFigs = $false
+  if (Test-Path ".\make_all_figures.py") {
+    $ranFigs = Try-Run -CmdLine (PyCmd "make_all_figures.py") -Friendly "python make_all_figures.py"
+  } else {
+    Write-Host "make_all_figures.py not found - skipping." -ForegroundColor Yellow
+  }
+
+  Write-Section "G) AUDIT"
+  $auditOK = $false
+  if (Test-Path ".\audit_phase1.py") {
+    $auditOK = Try-Run -CmdLine (PyCmd "audit_phase1.py") -Friendly "python audit_phase1.py"
+  } else {
+    Write-Host "audit_phase1.py not found - skipping." -ForegroundColor Yellow
+  }
+
+  Write-Section "H) QUICK SANITY"
+  $needFigs   = Get-ChildItem -Recurse -File -EA SilentlyContinue .\figures\*.png
+  $needCSTbl  = Test-Path .\results\cs_table.csv
+  $needRunSum = Test-Path .\results\run_summary.txt
+
+  Write-Host ("Figures (*.png) found: {0}" -f (@($needFigs).Count))
+  Write-Host ("CS table exists:       {0}" -f $needCSTbl)
+  Write-Host ("Run summary exists:    {0}" -f $needRunSum)
+
+  Write-Section "I) SUMMARY"
+  $notes = @()
+  if ($HEAD -ne $ORIGIN)        { $notes += "Local HEAD differs from origin/main (not critical for running)." }
+  if (-not $ranScenario)        { $notes += "Scenario run step did not execute (no known entry point succeeded)." }
+  if (-not $ranFigs)            { $notes += "Figure generation step skipped or failed." }
+  if (-not $auditOK)            { $notes += "Audit step failed or flagged issues." }
+  if (@($needFigs).Count -eq 0) { $notes += "No PNG figures under ./figures." }
+  if (-not $needCSTbl)          { $notes += "Missing results/cs_table.csv." }
+  if (-not $needRunSum)         { $notes += "Missing results/run_summary.txt." }
+
+  if ($notes.Count -eq 0) {
+    Write-Host "OK: Reproduction complete. All expected artifacts present." -ForegroundColor Green
+  } else {
+    Write-Host "Finished with notes:" -ForegroundColor Yellow
+    $notes | ForEach-Object { Write-Host (" - {0}" -f $_) -ForegroundColor Yellow }
+    Write-Host ""
+    Write-Host ("See full log: {0}" -f $logFile) -ForegroundColor Gray
+  }
+
+} catch {
+  Write-Host ""
+  Write-Host ("FATAL: {0}" -f $_.Exception.Message) -ForegroundColor Red
+  Write-Host ("See transcript: {0}" -f $logFile) -ForegroundColor Gray
+} finally {
+  Stop-Transcript 2>$null | Out-Null
+  Write-Host ""
+  Read-Host "Done. Press Enter to close" | Out-Null
+}
+
+=== A) REPO & ENV INFO ===
+
+-> Show remotes
+   git remote -v
+fatal: not a git repository (or any of the parent directories): .git
+X Exit code: 128
+
+-> Fetch/prune
+   git fetch --prune origin
+fatal: not a git repository (or any of the parent directories): .git
+X Exit code: 128
+git status -sb: ## main...origin/main
+HEAD:        c38ac091ae1abafb817bf074ba4bd49fa1e7f5cc
+origin/main: c38ac091ae1abafb817bf074ba4bd49fa1e7f5cc
+
+-> Python version
+   conda run -n phase1 python --version
+Python 3.11.13
+
+-> pip version
+   conda run -n phase1 python -m pip --version
+pip 25.2 from C:\Users\skand\anaconda3\envs\phase1\Lib\site-packages\pip (python 3.11)
+
+=== B) DEPENDENCIES (requirements.txt) ===
+
+-> Upgrade pip
+   conda run -n phase1 python -m pip install -U pip
+Requirement already satisfied: pip in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (25.2)
+
+-> Install dependencies
+   conda run -n phase1 python -m pip install -r requirements.txt
+Requirement already satisfied: colorama==0.4.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 1)) (0.4.6)
+Requirement already satisfied: contourpy==1.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 2)) (1.3.3)
+Requirement already satisfied: cycler==0.12.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 3)) (0.12.1)
+Requirement already satisfied: fonttools==4.60.1 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 4)) (4.60.1)
+Requirement already satisfied: iniconfig==2.1.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 5)) (2.1.0)
+Requirement already satisfied: kiwisolver==1.4.9 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 6)) (1.4.9)
+Requirement already satisfied: matplotlib==3.10.6 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 7)) (3.10.6)
+Requirement already satisfied: numpy==2.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 8)) (2.3.3)
+Requirement already satisfied: packaging==25.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 9)) (25.0)
+Requirement already satisfied: pandas==2.3.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 10)) (2.3.3)
+Requirement already satisfied: pillow==11.3.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 11)) (11.3.0)
+Requirement already satisfied: pluggy==1.6.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 12)) (1.6.0)
+Requirement already satisfied: Pygments==2.19.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 13)) (2.19.2)
+Requirement already satisfied: pyparsing==3.2.5 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 14)) (3.2.5)
+Requirement already satisfied: pytest==8.4.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 15)) (8.4.2)
+Requirement already satisfied: python-dateutil==2.9.0.post0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 16)) (2.9.0.post0)
+Requirement already satisfied: pytz==2025.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 17)) (2025.2)
+Requirement already satisfied: PyYAML==6.0.3 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 18)) (6.0.3)
+Requirement already satisfied: six==1.17.0 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 19)) (1.17.0)
+Requirement already satisfied: tzdata==2025.2 in c:\users\skand\anaconda3\envs\phase1\lib\site-packages (from -r requirements.txt (line 20)) (2025.2)
+
+=== C) RESET OUTPUTS (safe backup) ===
+  figures: (not found) - skipping.
+  results: (not found) - skipping.
+  runs: (not found) - skipping.
+
+=== D) TESTS ===
+
+FATAL: The term 'if' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+See transcript: C:\Users\skand\thesis-toy-model\_logs\20251016_221131\console.txt
+**********************
+Windows PowerShell transcript end
+End time: 20251016221149
+**********************
