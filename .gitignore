@@ -40,3 +40,6 @@ _audit_*.txt
 _prev_restore/
 diagnostics/
 rescue_report_*/
+# rescue/scratch artifacts
+_prev_restore/
+rescue_report_*/
