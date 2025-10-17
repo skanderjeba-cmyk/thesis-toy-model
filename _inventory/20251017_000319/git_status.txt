@@ -1,6 +1,0 @@
-﻿## main...origin/main
-?? _forensics/
-?? _inventory/
-?? _logs/
-?? _safety_audit/
-?? runs_restored_latest/
