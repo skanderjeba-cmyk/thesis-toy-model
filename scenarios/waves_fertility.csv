@@ -1,0 +1,7 @@
+﻿"Code","Slug","Overlays","Status"
+"A1_closed","symmetric_baseline_closed__fert_gap_pair_medium","symmetric_baseline_closed,fert_gap_pair_medium","OK"
+"A2_open_mu_only","symmetric_baseline_closed__fert_gap_pair_medium__open_migration_defaults__open_mu_only","symmetric_baseline_closed,fert_gap_pair_medium,open_migration_defaults,open_mu_only","OK"
+"A3_open_tauH_only","symmetric_baseline_closed__fert_gap_pair_medium__open_migration_defaults__open_tauH_only","symmetric_baseline_closed,fert_gap_pair_medium,open_migration_defaults,open_tauH_only","OK"
+"B1_closed_KLplusFert","KL_gap_closed__fert_gap_pair_medium","KL_gap_closed,fert_gap_pair_medium","OK"
+"C1_KL_open_mu_only_plusFert","KL_gap_closed__open_migration_defaults__open_mu_only__fert_gap_pair_medium","KL_gap_closed,open_migration_defaults,open_mu_only,fert_gap_pair_medium","OK"
+"C2_KL_open_tauH_only_plusFert","KL_gap_closed__open_migration_defaults__open_tauH_only__fert_gap_pair_medium","KL_gap_closed,open_migration_defaults,open_tauH_only,fert_gap_pair_medium","OK"

@@ -1,0 +1,4 @@
+﻿# One-knob overlay: headcount wedge only
+# Changes: migration.tau_H
+migration:
+  tau_H: 0.02
