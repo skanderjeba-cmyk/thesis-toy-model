@@ -1,0 +1,19 @@
+﻿__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+.env
+# generated/temporary stuff
+runs/
+figures/
+results/
+gallery_canonical/
+summary/
+*_backup*/
+*.log
+prof_pack_*.zip*
+# OS/IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
